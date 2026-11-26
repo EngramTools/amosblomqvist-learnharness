@@ -1,0 +1,11 @@
+{
+  "apiVersion": 1,
+  "id": "explain-back",
+  "name": "Explain-back checks",
+  "version": "0.1.0",
+  "minAppVersion": "0.4.1",
+  "description": "Teacher-posed explain-back checks: a literal reader reconstructs the learner's explanation and lists its gaps.",
+  "main": "main.js",
+  "backend": "backend.cjs",
+  "styles": "styles.css"
+}
