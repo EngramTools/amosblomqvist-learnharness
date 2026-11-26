@@ -112,7 +112,7 @@ npm run lint           # ESLint, including import restrictions
 npm run build          # Next production build
 ```
 
-The suite requires no paid models or real sign-in. Some tests use temporary files, native processes, or local fake endpoints: deterministic does not mean every test is pure or cannot bind a loopback port. Inspect focused-suite setup before running beside a live app.
+The suite requires no paid models or real sign-in, and no Chrome binary: browser-dependent tests skip with a `CHROME_PATH` reason when neither the app's browser helper nor a system Chrome resolves. The sandcastle green-branch gate (`npm ci && npm run check && npm run test`) therefore needs no Chrome. Some tests use temporary files, native processes, or local fake endpoints: deterministic does not mean every test is pure or cannot bind a loopback port. Inspect focused-suite setup before running beside a live app.
 
 [Golden fixtures](../tests/fixtures/golden-data/README.md) exercise saved records through production paths. Keep compatibility expectations with intentional format changes; do not hand-edit fixture content to make tests pass. [Standalone skill-reader tests](../tests/skills/README.md) run separately with Python and no app runtime.
 

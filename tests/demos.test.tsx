@@ -949,11 +949,14 @@ describe("demo/visual job runners", () => {
 		createdJobs.push(job.id);
 
 		visualModelOverride.current = scriptedModel([{ text: "cannot" }]);
+		// The failure must come from the model, not from host browser availability.
+		headlessOverride.current = fakeHeadless();
 		const { steers, runner } = testRunner();
 		try {
 			await runner.runJob(job.id);
 		} finally {
 			visualModelOverride.current = undefined;
+			headlessOverride.current = undefined;
 		}
 
 		const errored = jobStore.getJob(job.id)!;
