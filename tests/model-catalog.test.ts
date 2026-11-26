@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 const testData = fs.mkdtempSync(path.join(os.tmpdir(), "lh-cli-catalog-data-"));
@@ -347,14 +348,30 @@ function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true)
 	const settings = readSettings();
 	writeSettings({ ...(settings ?? { version: 1 }), claudeCode: { enabled } });
 
-	if (installed) fs.writeFileSync(path.join(dir, "claude"), "#!/bin/sh\n", { mode: 0o755 });
+	const fixtureClaude = path.join(dir, "claude");
+	if (installed) fs.writeFileSync(fixtureClaude, "#!/bin/sh\n", { mode: 0o755 });
 	process.env.PATH = dir;
 	process.env.HOME = dir;
 	delete process.env.npm_config_prefix;
 
+	// The production lookup also searches fixed install dirs (/usr/local/bin,
+	// …), so PATH/HOME alone cannot hide a real CLI on a developer machine.
+	// Hide every candidate except this fixture's own file.
+	const cjsFs = createRequire(import.meta.url)("node:fs") as { accessSync: typeof fs.accessSync };
+	const access = cjsFs.accessSync;
+	cjsFs.accessSync = ((file: fs.PathLike, mode?: number) => {
+		const name = path.basename(String(file));
+		const isHiddenSystemCandidate =
+			(name === "claude" || name === "claude.exe") && path.resolve(String(file)) !== fixtureClaude;
+		if (isHiddenSystemCandidate) throw new Error("hidden system claude");
+		return access(file, mode);
+	}) as typeof fs.accessSync;
+	syncBuiltinESMExports();
 	try {
 		fn();
 	} finally {
+		cjsFs.accessSync = access;
+		syncBuiltinESMExports();
 		for (const [name, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;

@@ -67,7 +67,24 @@ async function uploadThroughNext(path: string, oversized: boolean, forceClone = 
 	return { request, cloned: forceClone, actualBytes };
 }
 
+/** Next's forced clone leaves a legal multipart epilogue after the closing
+ *  boundary. Newer FormData parsers accept it; older ones (Node 22) reject
+ *  the whole body, so this control cannot run there. */
+async function acceptsMultipartEpilogue(): Promise<boolean> {
+	const form = new FormData();
+	form.append("file", new File(["probe"], "probe.txt"));
+	const sample = new Request(new URL(documentPath, origin), { method: "POST", body: form });
+	const body = Buffer.concat([Buffer.from(await sample.arrayBuffer()), Buffer.from("  ")]);
+	try {
+		await new Response(body, { headers: { "content-type": sample.headers.get("content-type") ?? "" } }).formData();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 it("installed Next forced-clone control demonstrates the previous oversized-epilogue acceptance", async t => {
+	if (!await acceptsMultipartEpilogue()) return t.skip("This Node's FormData parser rejects a multipart epilogue");
 	const warning = t.mock.method(console, "warn", () => {});
 	const { request, actualBytes } = await uploadThroughNext(documentPath, true, true);
 	assert.ok(actualBytes > MAX_DOCUMENT_BODY_BYTES);

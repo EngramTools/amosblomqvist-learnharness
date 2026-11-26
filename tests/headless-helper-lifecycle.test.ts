@@ -6,6 +6,9 @@ import { setImmediate } from "node:timers/promises";
 import { it, mock } from "node:test";
 import puppeteer, { type Browser } from "puppeteer-core";
 import { realHeadless } from "../src/agent/subagents/headless.ts";
+import { browserTestSkipReason } from "./helpers/browser-availability.ts";
+
+const browserSkip = browserTestSkipReason();
 
 function deferred() {
 	let resolve!: () => void;
@@ -80,7 +83,7 @@ function lifecycleFixture() {
 	};
 }
 
-it("a queued production demo acquires a fresh helper after the active helper cannot retire", { timeout: 5_000 }, async () => {
+it("a queued production demo acquires a fresh helper after the active helper cannot retire", { skip: browserSkip, timeout: 5_000 }, async () => {
 	const fixture = lifecycleFixture();
 	try {
 		assert.equal((await realHeadless.runDemo("<p>warm</p>", { settleMs: 0 })).ok, true);
@@ -112,7 +115,7 @@ it("a queued production demo acquires a fresh helper after the active helper can
 	} finally { fixture.dispose(); }
 });
 
-it("concurrent cold-start production demos cannot replace the helper whose retirement fails", { timeout: 5_000 }, async () => {
+it("concurrent cold-start production demos cannot replace the helper whose retirement fails", { skip: browserSkip, timeout: 5_000 }, async () => {
 	const fixture = lifecycleFixture();
 	fixture.pauseHandshake();
 	try {
