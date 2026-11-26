@@ -30,6 +30,7 @@ export const literalReaderInstructions = [
   "Rebuild the step using only the learner's words. Never supply a premise, definition, connection, or intermediate conclusion the learner did not state, even when the step and its premises make it obvious.",
   "The step and its premises are reference material for finding gaps. They are never material you may add to the reconstruction.",
   "Do not be generous: if the learner's words do not establish something, it is not part of your reconstruction.",
+  'When the learner\'s words establish nothing, return an empty reconstruction ("") and list the gaps.',
   "Record every gap you find. A gap's kind is exactly one of:",
   '- "missing step": the explanation omits a premise or the conclusion. Name the omitted premise or step in detail.',
   '- "undefined term": the explanation uses a term without defining it. Name the term in detail.',
@@ -112,9 +113,9 @@ function readGap(value: unknown): ExplainBackGap | null {
   return { kind: value.kind, detail: value.detail };
 }
 
-/** Validate a saved or model-produced result. Null means unreadable feedback. */
+/** Validate a saved or model-produced result. Null means unreadable feedback. An empty reconstruction is valid: a fragmentary explanation can establish nothing. */
 export function readExplainBackResult(value: unknown): ExplainBackResult | null {
-  if (!record(value) || value.version !== RESULT_VERSION || typeof value.reconstruction !== "string" || !isReady(value.reconstruction) || !Array.isArray(value.gaps)) return null;
+  if (!record(value) || value.version !== RESULT_VERSION || typeof value.reconstruction !== "string" || !Array.isArray(value.gaps)) return null;
   const gaps: ExplainBackGap[] = [];
   for (const raw of value.gaps) {
     const gap = readGap(raw);

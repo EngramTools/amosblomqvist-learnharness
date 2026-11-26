@@ -32,7 +32,7 @@ learner did not state. It returns versioned JSON:
 ```ts
 {
   version: 1;
-  reconstruction: string;
+  reconstruction: string; // may be "" when the learner's words establish nothing
   gaps: { kind: "missing step" | "undefined term" | "wrong order" | "conclusion buried"; detail: string }[];
 }
 ```
@@ -42,6 +42,9 @@ grading error; the answered card shows that error above the saved explanation. T
 continues normally.
 
 ## Build and install
+
+Run `npm ci` in the repository root first: `npm run sdk` builds the plugin API types from the
+root checkout and needs its dependencies installed.
 
 ```sh
 npm run sdk
@@ -53,3 +56,4 @@ npm test
 The build writes `dist/` with the manifest, browser module, backend module, styles, README
 and license. Copy the built package into the plugins directory as `<plugins-directory>/explain-back/dist/`,
 refresh the list, and enable it. Building does not install or enable the package.
+From this directory, `node ../../scripts/install-plugin-local.mjs "<plugins-directory>"` copies the built `dist/` into that directory (it does not enable the plugin).

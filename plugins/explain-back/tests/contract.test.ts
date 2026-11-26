@@ -80,7 +80,8 @@ test("saved grading results accept only the documented version, reconstruction a
   assert.deepEqual(readExplainBackResult(result), result);
   assert.deepEqual(readExplainBackResult({ ...result, gaps: [] }), { ...result, gaps: [] });
   assert.equal(readExplainBackResult({ ...result, version: 2 }), null);
-  assert.equal(readExplainBackResult({ ...result, reconstruction: "  " }), null);
+  assert.deepEqual(readExplainBackResult({ ...result, reconstruction: "" }), { ...result, reconstruction: "" });
+  assert.equal(readExplainBackResult({ ...result, reconstruction: 3 }), null);
   assert.equal(readExplainBackResult({ ...result, gaps: [{ kind: "missing premise", detail: "x" }] }), null);
   assert.equal(readExplainBackResult({ ...result, gaps: [{ kind: "missing step" }] }), null);
   assert.equal(readExplainBackResult({ ...result, gaps: "none" }), null);

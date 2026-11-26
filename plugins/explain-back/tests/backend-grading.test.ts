@@ -124,6 +124,16 @@ test("a missing premise produces a missing-step gap naming it while instructions
   assert.match(f.requests[0]!.context.systemPrompt!, /never supply a premise/i);
 });
 
+test("an empty reconstruction with a missing-step gap is a valid result, not a grading error", async () => {
+  const gap = { kind: "missing step", detail: "Squaring 2k gives 4k²." };
+  const f = fixture({ complete: async () => reply(JSON.stringify({ version: 1, reconstruction: "", gaps: [gap] })) });
+  const context = gradingContext();
+  const result = await f.grade({ ...context, answer: { text: "Something about evens." } });
+  assert.deepEqual(result, { version: 1, reconstruction: "", gaps: [gap] });
+  assert.match(f.requests[0]!.context.systemPrompt!, /establish nothing, return an empty reconstruction/i);
+  f.cleanup();
+});
+
 test("falls back to the strong-slot default when the session has no model override", async () => {
   const f = fixture({ session: { settings: {} } as unknown as ChatRecord });
   await f.grade(gradingContext());
