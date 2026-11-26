@@ -19,20 +19,24 @@ const MESSAGES = {
 	interaction: "This sign-in action is no longer available.",
 };
 function publicError(error) { return MESSAGES[error?.code] ?? MESSAGES.unavailable; }
-/** Resolve the SAME SDK installation as the standalone server, through public exports. */
-async function loadSubscriptionSDK(baseDirectory) {
-	const resolve = createRequire(path.join(baseDirectory, "package.json"));
-	const load = (id) => {
-		// Pi exports are import-only. Resolve the public export with ESM
-		// conditions, then remove this synchronous, exact-specifier hook
-		// BEFORE evaluation; no private package path or global hook remains.
+/** Pi exports are import-only. Prefer CJS conditions directly (Node 22 does
+ *  not consult an ESM resolve hook for CJS); fall back to the hook on loaders
+ *  whose CJS resolver drops the conditions option. */
+function resolveImportOnlyExport(resolve, id) {
+	try {
+		return resolve.resolve(id, { conditions: new Set(["import"]) });
+	} catch {
 		const hook = registerHooks({ resolve(specifier, context, next) {
 			return next(specifier, specifier === id ? { ...context, conditions: [...context.conditions, "import"] } : context);
 		} });
-		let file;
-		try { file = resolve.resolve(id); } finally { hook.deregister(); }
-		return import(pathToFileURL(file).href);
-	};
+		try { return resolve.resolve(id); } finally { hook.deregister(); }
+	}
+}
+
+/** Resolve the SAME SDK installation as the standalone server, through public exports. */
+async function loadSubscriptionSDK(baseDirectory) {
+	const resolve = createRequire(path.join(baseDirectory, "package.json"));
+	const load = (id) => import(pathToFileURL(resolveImportOnlyExport(resolve, id)).href);
 	const [sdk, copilot, xai] = await Promise.all([load("@earendil-works/pi-ai"), load("@earendil-works/pi-ai/providers/github-copilot"), load("@earendil-works/pi-ai/providers/xai")]);
 	return { ...sdk, ...copilot, ...xai };
 }

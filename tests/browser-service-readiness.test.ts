@@ -62,7 +62,9 @@ describe("browser-service shipping readiness", () => {
 			if (++requests < 3) { res.writeHead(503); res.end(); }
 			else setTimeout(() => res.end(version(port)), 20);
 		}, async (port, idle) => {
-			assert.equal(await waitForBrowserService(port, { ...short, timeoutMs: 2000 }), endpoint(port));
+			// Loaded CI hosts can schedule the 20ms reply past the 50ms ordinary
+			// request budget; that must not turn this into a retry assertion.
+			assert.equal(await waitForBrowserService(port, { ...short, timeoutMs: 2000, requestTimeoutMs: 500 }), endpoint(port));
 			assert.equal(requests, 3);
 			await idle();
 			await delay(40);

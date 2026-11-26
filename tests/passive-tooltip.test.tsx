@@ -89,7 +89,9 @@ function fixture(interactions = true) {
 		restoreModal();
 		for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
 		console.error = originalError;
-		assert.deepEqual(errors, [], "tooltip lifecycle has no console errors or stale updates");
+		// Node 22 prints an ExperimentalWarning for mock timers on this process's
+		// console; it is environment noise, not a tooltip or interaction error.
+		assert.deepEqual(errors.filter((line) => !line.includes("ExperimentalWarning")), [], "tooltip lifecycle has no console errors or stale updates");
 	};
 	return { dom, render, event, advance, focus, controller: () => controller! };
 }
