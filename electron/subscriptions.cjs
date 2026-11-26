@@ -1,7 +1,8 @@
 "use strict";
 const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
 const path = require("node:path");
-const { createRequire, registerHooks } = require("node:module");
+const { findPackageJSON } = require("node:module");
 const { pathToFileURL } = require("node:url");
 const { PROVIDERS, fileStore, validateCredential, safeHttps, failure } = require("./subscription-store.cjs");
 
@@ -19,19 +20,40 @@ const MESSAGES = {
 	interaction: "This sign-in action is no longer available.",
 };
 function publicError(error) { return MESSAGES[error?.code] ?? MESSAGES.unavailable; }
+/** Pi exports are import-only, and Node 22's createRequire.resolve ignores
+ *  registerHooks conditions. Resolve the package's public export map directly
+ *  from the standalone server's installation; no private path is read. */
+function importExportTarget(exportsMap, subpath) {
+	const targetOf = (value) => typeof value === "string"
+		? value
+		: value && typeof value === "object" ? value.import ?? value.default : undefined;
+	if (typeof exportsMap === "string") return subpath === "." ? exportsMap : undefined;
+	if (!exportsMap || typeof exportsMap !== "object") return undefined;
+	if (!Object.keys(exportsMap).some((key) => key.startsWith("."))) return subpath === "." ? targetOf(exportsMap) : undefined;
+	if (Object.hasOwn(exportsMap, subpath)) return targetOf(exportsMap[subpath]);
+	for (const [key, value] of Object.entries(exportsMap)) {
+		const star = key.indexOf("*");
+		if (star < 0) continue;
+		const prefix = key.slice(0, star), suffix = key.slice(star + 1);
+		if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix) || subpath.length < prefix.length + suffix.length) continue;
+		const matched = subpath.slice(prefix.length, subpath.length - suffix.length);
+		const target = targetOf(value);
+		if (typeof target === "string") return target.split("*").join(matched);
+	}
+	return undefined;
+}
 /** Resolve the SAME SDK installation as the standalone server, through public exports. */
 async function loadSubscriptionSDK(baseDirectory) {
-	const resolve = createRequire(path.join(baseDirectory, "package.json"));
-	const load = (id) => {
-		// Pi exports are import-only. Resolve the public export with ESM
-		// conditions, then remove this synchronous, exact-specifier hook
-		// BEFORE evaluation; no private package path or global hook remains.
-		const hook = registerHooks({ resolve(specifier, context, next) {
-			return next(specifier, specifier === id ? { ...context, conditions: [...context.conditions, "import"] } : context);
-		} });
-		let file;
-		try { file = resolve.resolve(id); } finally { hook.deregister(); }
-		return import(pathToFileURL(file).href);
+	const base = path.join(baseDirectory, "package.json");
+	const load = async (id) => {
+		const manifest = findPackageJSON(id, base);
+		if (!manifest) throw new Error(`Subscription SDK export is unavailable: ${id}`);
+		const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+		const name = typeof pkg.name === "string" ? pkg.name : "";
+		const subpath = name && (id === name || id.startsWith(`${name}/`)) ? `.${id.slice(name.length)}` : ".";
+		const target = importExportTarget(pkg.exports, subpath);
+		if (typeof target !== "string") throw new Error(`Subscription SDK export is unavailable: ${id}`);
+		return import(new URL(target, pathToFileURL(manifest)).href);
 	};
 	const [sdk, copilot, xai] = await Promise.all([load("@earendil-works/pi-ai"), load("@earendil-works/pi-ai/providers/github-copilot"), load("@earendil-works/pi-ai/providers/xai")]);
 	return { ...sdk, ...copilot, ...xai };

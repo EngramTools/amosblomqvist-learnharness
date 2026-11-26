@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 const testData = fs.mkdtempSync(path.join(os.tmpdir(), "lh-cli-catalog-data-"));
@@ -348,6 +349,18 @@ function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true)
 	writeSettings({ ...(settings ?? { version: 1 }), claudeCode: { enabled } });
 
 	if (installed) fs.writeFileSync(path.join(dir, "claude"), "#!/bin/sh\n", { mode: 0o755 });
+	// The lookup also probes fixed system directories (/usr/local/bin, …).
+	// Hide any real CLI there so "missing" means missing from the whole lookup.
+	const nodeFs = createRequire(import.meta.url)("node:fs");
+	const accessSync = nodeFs.accessSync;
+	const restoreFs = installed ? null : () => { nodeFs.accessSync = accessSync; syncBuiltinESMExports(); };
+	if (!installed) {
+		nodeFs.accessSync = (file: string, mode?: number) => {
+			if (path.basename(file) === "claude" && path.dirname(file) !== dir) throw new Error("hidden by test fixture");
+			return accessSync(file, mode);
+		};
+		syncBuiltinESMExports();
+	}
 	process.env.PATH = dir;
 	process.env.HOME = dir;
 	delete process.env.npm_config_prefix;
@@ -355,6 +368,7 @@ function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true)
 	try {
 		fn();
 	} finally {
+		restoreFs?.();
 		for (const [name, value] of Object.entries(saved)) {
 			if (value === undefined) delete process.env[name];
 			else process.env[name] = value;

@@ -39,7 +39,13 @@ function fixture(interactions = true) {
 	const restoreModal = installModalDom(dom);
 	const originalError = console.error;
 	const errors: string[] = [];
-	console.error = (...args) => { errors.push(args.map(String).join(" ")); };
+	console.error = (...args) => {
+		const text = args.map(String).join(" ");
+		// Node versions that still call MockTimers experimental emit this through
+		// console.error; it is environment noise, not a tooltip lifecycle error.
+		if (/ExperimentalWarning: The MockTimers API is an experimental feature/.test(text)) return;
+		errors.push(text);
+	};
 	const proto = dom.window.HTMLElement.prototype;
 	const changed = new Map<string, PropertyDescriptor | undefined>();
 	const define = (key: string, descriptor: PropertyDescriptor) => { changed.set(key, Object.getOwnPropertyDescriptor(proto, key)); Object.defineProperty(proto, key, { configurable: true, ...("value" in descriptor ? { writable: true } : {}), ...descriptor }); };
