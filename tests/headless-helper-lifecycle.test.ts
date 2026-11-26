@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
-import os from "node:os";
-import path from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { it, mock } from "node:test";
 import puppeteer, { type Browser } from "puppeteer-core";
@@ -18,10 +16,6 @@ function deferred() {
 /** Production entry point, with only process/CDP transport mocked. No process,
  * browser, DNS lookup or socket is actually opened by this fixture. */
 function lifecycleFixture() {
-	// Keep electron's lazy package entry from downloading a binary in tests;
-	// spawn is mocked and never executes this path.
-	const savedElectronOverride = process.env.ELECTRON_OVERRIDE_DIST_PATH;
-	process.env.ELECTRON_OVERRIDE_DIST_PATH = path.join(os.tmpdir(), "lh-headless-helper-fixture");
 	const killed: number[] = [];
 	const spawned = deferred(), heldLoad = deferred(), releaseLoad = deferred();
 	let pauseHandshake = false, connections = 0;
@@ -82,13 +76,11 @@ function lifecycleFixture() {
 			// this fixture's module-global helper, or start a real process.
 			for (const helper of helpers) { helper.owner.alive = false; helper.proc.exitCode = 0; }
 			mock.restoreAll(); syncBuiltinESMExports();
-			if (savedElectronOverride === undefined) delete process.env.ELECTRON_OVERRIDE_DIST_PATH;
-			else process.env.ELECTRON_OVERRIDE_DIST_PATH = savedElectronOverride;
 		},
 	};
 }
 
-it("a queued production demo acquires a fresh helper after the active helper cannot retire", { timeout: 30_000 }, async () => {
+it("a queued production demo acquires a fresh helper after the active helper cannot retire", { timeout: 5_000 }, async () => {
 	const fixture = lifecycleFixture();
 	try {
 		assert.equal((await realHeadless.runDemo("<p>warm</p>", { settleMs: 0 })).ok, true);
@@ -120,7 +112,7 @@ it("a queued production demo acquires a fresh helper after the active helper can
 	} finally { fixture.dispose(); }
 });
 
-it("concurrent cold-start production demos cannot replace the helper whose retirement fails", { timeout: 30_000 }, async () => {
+it("concurrent cold-start production demos cannot replace the helper whose retirement fails", { timeout: 5_000 }, async () => {
 	const fixture = lifecycleFixture();
 	fixture.pauseHandshake();
 	try {
