@@ -1,0 +1,88 @@
+.lh-explain-back,
+.lh-explain-back-grading {
+  display: grid;
+  gap: 0.75rem;
+  color: var(--foreground, #e6e6e6);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.lh-explain-back__prompt > :first-child,
+.lh-explain-back__prose > :first-child { margin-top: 0; }
+.lh-explain-back__prompt > :last-child,
+.lh-explain-back__prose > :last-child { margin-bottom: 0; }
+.lh-explain-back__section {
+  min-width: 0;
+  border: 1px solid var(--border, #434343);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--background, #141414) 92%, var(--foreground, #e6e6e6));
+  padding: 0.625rem 0.75rem;
+}
+.lh-explain-back__label {
+  margin-bottom: 0.375rem;
+  color: var(--muted-foreground, #8d8d8d);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.lh-explain-back__prose {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lh-explain-back__premise-list,
+.lh-explain-back__gap-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.lh-explain-back__premise-list > li + li,
+.lh-explain-back__gap-list > li + li { margin-top: 0.375rem; }
+.lh-explain-back__gap {
+  display: grid;
+  gap: 0.125rem;
+  overflow-wrap: anywhere;
+}
+.lh-explain-back__gap-kind {
+  color: var(--muted-foreground, #8d8d8d);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.lh-explain-back__no-gaps,
+.lh-explain-back__nothing-reconstructed { color: var(--muted-foreground, #8d8d8d); }
+.lh-explain-back__error {
+  border-color: color-mix(in oklab, var(--destructive, #ef4444) 55%, var(--border, #434343));
+}
+.lh-explain-back__error-detail {
+  margin: 0.375rem 0 0;
+  color: var(--muted-foreground, #8d8d8d);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.lh-explain-back-editor {
+  min-width: 0;
+  border: 1px solid var(--border, #434343);
+  border-radius: 0.5rem;
+  background: var(--background, #141414);
+}
+.lh-explain-back-editor:focus-within { outline: 1px solid var(--primary, #e6e6e6); }
+.lh-explain-back-editor__input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 7rem;
+  max-height: min(24rem, 50vh);
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+  resize: vertical;
+  field-sizing: content;
+  outline: none;
+}
+.lh-explain-back-editor__input::placeholder { color: var(--muted-foreground, #8d8d8d); }
