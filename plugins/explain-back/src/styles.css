@@ -49,7 +49,8 @@
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-.lh-explain-back__no-gaps { color: var(--muted-foreground, #8d8d8d); }
+.lh-explain-back__no-gaps,
+.lh-explain-back__nothing-reconstructed { color: var(--muted-foreground, #8d8d8d); }
 .lh-explain-back__error {
   border-color: color-mix(in oklab, var(--destructive, #ef4444) 55%, var(--border, #434343));
 }

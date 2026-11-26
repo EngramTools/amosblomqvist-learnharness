@@ -38,7 +38,9 @@ function mountError(document: Document, container: HTMLElement, message: string)
 
 function mountResult(document: Document, container: HTMLElement, result: ExplainBackResult): void {
   const reconstruction = section(document, "lh-explain-back__reconstruction", "What a literal reader understood");
-  reconstruction.append(paragraph(document, "lh-explain-back__prose", result.reconstruction));
+  reconstruction.append(result.reconstruction.trim() === ""
+    ? paragraph(document, "lh-explain-back__prose lh-explain-back__nothing-reconstructed", "Nothing could be reconstructed from the explanation.")
+    : paragraph(document, "lh-explain-back__prose", result.reconstruction));
   container.append(reconstruction);
 
   const gaps = section(document, "lh-explain-back__gaps", "Gaps");

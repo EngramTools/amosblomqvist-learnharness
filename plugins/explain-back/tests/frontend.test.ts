@@ -145,6 +145,28 @@ test("the answered card shows the saved explanation, reconstruction and labelled
   assert.equal(container.textContent, "");
 });
 
+test("an empty reconstruction shows a placeholder and still lists the gaps", () => {
+  const f = fixture();
+  for (const reconstruction of ["", "  \n "]) {
+    const container = f.document.createElement("div");
+    f.document.body.append(container);
+    const controller = new AbortController();
+    f.renderer.mountAnswered!(container, {
+      ...mountContext(controller.signal),
+      answer: { text: "Something about evens." },
+      grading: { result: { version: 1, reconstruction, gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }] } },
+    });
+
+    const section = container.querySelector(".lh-explain-back__reconstruction")!;
+    assert.match(section.textContent!, /What a literal reader understood/);
+    assert.match(section.textContent!, /Nothing could be reconstructed from the explanation\./);
+    assert.equal(section.querySelectorAll("p").length, 1);
+    assert.equal(container.querySelectorAll("[data-gap-kind]").length, 1);
+    assert.match(container.textContent!, /Squaring 2k gives 4k²\./);
+    controller.abort();
+  }
+});
+
 test("a grading error is shown readably and an unreadable saved result falls back to the error state", () => {
   const f = fixture();
   const failed = f.document.createElement("div");
