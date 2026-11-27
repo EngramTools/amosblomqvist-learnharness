@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
-import { DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage } from "../src/core/dictation.ts";
+import { DICTATION_LANGUAGES, deepgramListenUrl, isDictationLanguage, isEnglishDictationLanguage } from "../src/core/dictation.ts";
 import { sanitizeUserSettings } from "../src/core/settings.ts";
 import { resolveSettings } from "../src/core/settings-resolution.ts";
 import { parseDictationSettingsBody } from "../src/server/settings-body.ts";
@@ -31,6 +31,22 @@ describe("Nova-3 dictation language contract", () => {
 				model: "nova-3", encoding: "linear16", sample_rate: "16000", channels: "1",
 				smart_format: "true", punctuate: "true", endpointing: "300", language,
 			});
+			// The default path never requests filler words, even when a caller
+			// passes an (unchecked) truthy options bag.
+			assert.equal("filler_words" in url.searchParams ? url.searchParams.get("filler_words") : null, null);
+		}
+	});
+
+	it("filler_words is requested only for English and never changes the default URL", () => {
+		for (const english of ["en", "en-US", "en-GB", "en-IN", "en-AU", "en-NZ", "multi"]) {
+			const url = new URL(deepgramListenUrl(english as never, { fillerWords: true }));
+			assert.equal(url.searchParams.get("filler_words"), "true", english);
+			assert.equal(deepgramListenUrl(english as never).includes("filler_words"), false, "opt-out stays filler-free");
+			assert.ok(isEnglishDictationLanguage(english as never), english);
+		}
+		for (const other of ["pl", "sv", "de", "zh", "pt-BR", "zh-Hant", "ar-EG"]) {
+			assert.equal(new URL(deepgramListenUrl(other as never, { fillerWords: true })).searchParams.has("filler_words"), false, other);
+			assert.equal(isEnglishDictationLanguage(other as never), false, other);
 		}
 	});
 

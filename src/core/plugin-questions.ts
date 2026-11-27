@@ -1,6 +1,7 @@
 /** Bounded plugin-question contracts and browser-safe saved-authority helpers. */
 import type { Static, TSchema } from "typebox";
 import type { PluginCleanup } from "./plugins.ts";
+import type { DictatedSpeech } from "./dictation.ts";
 import { checkPluginSchema, preparePluginSchema } from "./plugin-validation.ts";
 import { copyImmutableData, ImmutableReadCache } from "./immutable-data.ts";
 import { Format } from "typebox/format";
@@ -65,6 +66,18 @@ export interface PluginQuestionEditorHandle {
 	 * Meta/Ctrl+Enter remains reserved host submission. */
 	handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
 	appendTranscript?(text: string): void | Promise<void>;
+	/** Opt-in to per-word timings: set `wantsDictatedWords: true` and implement
+	 *  `appendDictatedSpeech`. Dictation then also asks Deepgram to keep filler
+	 *  words (disfluencies such as "uh" and "um", which are otherwise dropped
+	 *  from the transcript) when the dictation language is English. Read at
+	 *  dictation start. Without both, the editor keeps receiving plain
+	 *  transcript text through `appendTranscript`. */
+	wantsDictatedWords?: boolean;
+	/** Receives `{ text, words }` instead of a plain string when the editor
+	 *  opted in with `wantsDictatedWords`. `text` is the transcript
+	 *  `appendTranscript` would have received; `words` are every final's words
+	 *  in order. Same sync/async publication rules as `appendTranscript`. */
+	appendDictatedSpeech?(speech: DictatedSpeech): void | Promise<void>;
 	dispose(): void;
 }
 export interface PluginQuestionRenderer<Q = JsonValue, A = JsonValue> {
