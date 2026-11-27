@@ -105,9 +105,7 @@ function completionText(message: AssistantMessage): string {
   }
   let text = "";
   for (const part of message.content) if (part.type === "text") text += part.text;
-  text = text.trim();
-  if (!text) throw new Error("The literal reader returned no text.");
-  return text;
+  return text.trim();
 }
 
 /** Accept a bare JSON object, a fenced block, or a JSON object inside a short reply. */
@@ -185,7 +183,9 @@ export async function gradeExplainBack<Q, A>(
     signal: grading.signal,
   });
   grading.signal.throwIfAborted();
-  const result = readExplainBackResult(parseLiteralReaderReply(completionText(message)));
+  const replyText = completionText(message);
+  if (!replyText) throw new Error("The literal reader returned no text.");
+  const result = readExplainBackResult(parseLiteralReaderReply(replyText));
   if (!result) throw new Error(`The literal reader returned an invalid result. Expected version ${RESULT_VERSION} with a reconstruction and gaps of a known kind.`);
   const input = { payload, explanation: answer.text, result };
   const scoring = await scoreLiteracy({ context, model, signal: grading.signal, input, options });
@@ -222,6 +222,7 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
 }
 
 async function writeFixWording(request: FixWordingRequest): Promise<string> {
+  let text: string;
   try {
     const message = await request.context.inference.complete({
       model: request.model,
@@ -237,11 +238,14 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
       signal: request.signal,
     });
     request.signal.throwIfAborted();
-    return readFixWording(completionText(message), request.model);
+    text = completionText(message);
   } catch (error) {
     request.signal.throwIfAborted();
     throw new Error(`The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
   }
+  // Outside the provider-failure catch so readFixWording's model-named
+  // diagnostic reaches the unavailable reason.
+  return readFixWording(text, request.model);
 }
 
 /** Read the wording reply; blank text is a failed call, named after the model that ran. */

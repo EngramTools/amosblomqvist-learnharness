@@ -15,7 +15,7 @@ import type {
 } from "learnharness-plugin-api";
 import { activate } from "../src/backend.ts";
 import type { ExplainBackAnswer, ExplainBackPayload, ExplainBackResult } from "../src/contract.ts";
-import { GAP_KINDS, literalReaderInstructions } from "../src/contract.ts";
+import { GAP_KINDS, literalReaderInstructions, type GapKind } from "../src/contract.ts";
 import { fixWordingInstructions, type JevRuntime } from "../src/grader.ts";
 import { sendJson, stubJsonServer } from "./support/http-stub.ts";
 
@@ -30,17 +30,39 @@ function reply(text: string, stopReason: "stop" | "error" | "aborted" = "stop"):
   } as unknown as AssistantMessage;
 }
 
+function catalogModel(id: string, provider: string): ModelCatalogResponse["models"][number] {
+  return {
+    id,
+    name: `${provider}/${id}`,
+    provider,
+    reasoning: false,
+    input: ["text"],
+    supportedLevels: ["off", "low", "high"],
+    cost: null,
+    contextWindow: null,
+    maxTokens: null,
+  };
+}
+
+function chatWith(settings: ChatRecord["settings"]): ChatRecord {
+  return {
+    id: "chat-fixture",
+    title: "Explain-back fixture",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    messages: [],
+    settings,
+  };
+}
+
 function catalog(defaults: ModelCatalogResponse["defaults"] = { model: { provider: "test", id: "default-model" }, thinkingLevel: "low" }): ModelCatalogResponse {
   return {
     defaults,
-    models: [
-      { id: "default-model", provider: "test" },
-      { id: "session-model", provider: "test" },
-    ],
-    rolePins: {},
-    slots: {},
+    models: [catalogModel("default-model", "test"), catalogModel("session-model", "test")],
+    rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, sideQuestion: null },
+    slots: { strong: null, cheap: null, vision: null },
     providers: [],
-  } as unknown as ModelCatalogResponse;
+  };
 }
 
 const payload: ExplainBackPayload = {
@@ -61,27 +83,31 @@ const noKeyScoring = {
   reason: "No TypeSafe API key is configured, so criterion scoring is unavailable.",
 };
 
-const claudeSession = { settings: { model: { provider: "claude-code", id: "opus" }, thinkingLevel: "high" } } as unknown as ChatRecord;
+const claudeSession = chatWith({ model: { provider: "claude-code", id: "opus" }, thinkingLevel: "high" });
 
 function claudeCatalog(cheap: ModelCatalogResponse["slots"]["cheap"]): ModelCatalogResponse {
   return {
     defaults: { model: { provider: "claude-code", id: "opus" }, thinkingLevel: "high" },
-    models: [
-      { id: "opus", provider: "claude-code" },
-      { id: "sonnet", provider: "claude-code" },
-    ],
-    rolePins: {},
-    slots: { cheap },
+    models: [catalogModel("opus", "claude-code"), catalogModel("sonnet", "claude-code")],
+    rolePins: { researcher: null, demoBuilder: null, visualMaker: null, extractor: null, auditor: null, sideQuestion: null },
+    slots: { strong: null, cheap, vision: null },
     providers: [],
-  } as unknown as ModelCatalogResponse;
+  };
 }
+
+const jevNoul: Record<GapKind, number> = {
+  "missing step": 0.4,
+  "undefined term": 0.4,
+  "wrong order": 0.4,
+  "conclusion buried": 0.4,
+};
 
 /** A Jev reply that picks the missing-step criterion, so scoring reaches the fix-wording call. */
 const jevReply = {
   model: "jev-1.14.0",
   answers: {
-    ...Object.fromEntries(GAP_KINDS.map(kind => [kind, { type: "noul", noul: 0.4 }])),
-    fix: { type: "choice", choice: "missing step", confidence: 0.64, probabilities: { "missing step": 0.82 } },
+    ...Object.fromEntries(GAP_KINDS.map(kind => [kind, { type: "noul" as const, noul: jevNoul[kind] }])),
+    fix: { type: "choice" as const, choice: "missing step" as const, confidence: 0.64, probabilities: { "missing step": 0.82 } },
   },
 };
 
@@ -93,6 +119,11 @@ async function answerBothPrompts(request: PluginInferenceRequest): Promise<Assis
 
 async function failFixWording(request: PluginInferenceRequest): Promise<AssistantMessage> {
   if (request.context.systemPrompt === fixWordingInstructions) throw new Error("The provider refused the fix wording.");
+  return reply(JSON.stringify(gradedPayload));
+}
+
+async function blankFixWording(request: PluginInferenceRequest): Promise<AssistantMessage> {
+  if (request.context.systemPrompt === fixWordingInstructions) return reply("   ");
   return reply(JSON.stringify(gradedPayload));
 }
 
@@ -153,7 +184,7 @@ function fixture(options: {
 }
 
 test("grades through the session model and returns the literal reconstruction and named gaps", async () => {
-  const session = { settings: { model: { provider: "test", id: "session-model" }, thinkingLevel: "high" } } as unknown as ChatRecord;
+  const session = chatWith({ model: { provider: "test", id: "session-model" }, thinkingLevel: "high" });
   const f = fixture({ session });
   const result = await f.grade(gradingContext());
 
@@ -198,7 +229,7 @@ test("an empty reconstruction with a missing-step gap is a valid result, not a g
 });
 
 test("falls back to the strong-slot default when the session has no model override", async () => {
-  const f = fixture({ session: { settings: {} } as unknown as ChatRecord });
+  const f = fixture({ session: chatWith({}) });
   await f.grade(gradingContext());
   assert.deepEqual(f.requests[0]!.model, { provider: "test", id: "default-model", thinkingLevel: "low" });
 });
@@ -245,6 +276,12 @@ test("both grading calls run on the cheap-slot model when one is configured", as
   try {
     const result = await f.grade(gradingContext());
     if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected criterion scoring to succeed");
+    const fix = jevReply.answers.fix;
+    assert.equal(result.scoring.fix.criterion, fix.choice);
+    assert.equal(result.scoring.fix.probability, fix.probabilities[fix.choice]);
+    assert.notEqual(result.scoring.fix.probability, fix.confidence);
+    assert.equal(result.scoring.fix.wording, "Next time, state that squaring 2k gives 4k².");
+    for (const kind of GAP_KINDS) assert.equal(result.scoring.criteria[kind], jevNoul[kind]);
     assert.equal(f.requests.length, 2);
     for (const request of f.requests) {
       assert.deepEqual(request.model, { provider: "claude-code", id: "sonnet", thinkingLevel: "low" });
@@ -293,6 +330,25 @@ test("a cheap slot whose model is missing from the catalog falls back to the ses
     for (const request of f.requests) {
       assert.deepEqual(request.model, { provider: "claude-code", id: "opus", thinkingLevel: "high" });
     }
+  } finally {
+    f.cleanup();
+    await stub.close();
+  }
+});
+
+test("a blank fix-wording reply names the model and the missing wording", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "sonnet" }, thinkingLevel: "low" }),
+    complete: blankFixWording,
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+  });
+  try {
+    const result = await f.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
+    assert.equal(result.scoring.reason, "The explain-back model claude-code/sonnet returned no fix wording.");
   } finally {
     f.cleanup();
     await stub.close();
