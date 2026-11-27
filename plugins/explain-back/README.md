@@ -21,7 +21,11 @@ this payload:
 ```
 
 The learner sees the prompt, the step, and its premises, and writes a free-text answer.
-Dictation appends to the answer as usual. The saved answer is `{ text: string }`, where `text`
+Dictation appends to the answer as usual. With **interview mode** on (plugin settings,
+off by default), the editor opts in to per-word dictation timings with Deepgram filler
+words (English dictation only) and the saved answer carries `{ text, language, words }`
+as long as the text is unedited dictated speech; any typed edit drops that provenance.
+The saved answer is `{ text: string }` at minimum, where `text`
 must contain non-whitespace explanation.
 
 `gradeAnswer` resolves one grading model for both of its host-model calls, then calls
@@ -44,6 +48,10 @@ definition, or connection the learner did not state. It returns versioned JSON:
         fix: { criterion: GapKind; probability: number; wording: string };
       }
     | { status: "unavailable"; reason: string };
+  delivery?: // omitted only on results saved before interview mode existed; every newer
+             // result carries it, as "unavailable" with a reason when metrics do not apply
+    | { status: "ok"; fillersPerMin: number; wordsPerMin: number; pauses: { afterWord: string; seconds: number }[] }
+    | { status: "unavailable"; reason: string };
 }
 ```
 
@@ -60,7 +68,8 @@ With a TypeSafe API key configured, each grade makes up to two host-model calls 
 HTTP request on the same grading path: one grading-model call for the literal reader, one HTTP
 request to Jev (`POST https://api.typesafe.ai/v1/systemone`, model alias `jev-latest`), and—when
 Jev succeeds—a second grading-model call that writes the fix wording. Both host-model calls use
-the same resolved model. The Jev request state is
+the same resolved model. (Jev is TypeSafe's scoring model; a `noul` question asks it for the
+probability, 0 to 1, that a stated property holds.) The Jev request state is
 `{step, premises, explanation, reconstruction, gaps}`; it asks one `noul` question for each
 gap criterion and one `choice` question for the single most important fix. The answered card
 shows every criterion probability and the chosen fix when scoring status is `ok`.
@@ -78,6 +87,30 @@ The key is stored as `<data>/settings.json` with owner-only permissions. The plu
 includes a TypeSafe API key field whose note states that learner text is sent to TypeSafe for
 scoring. The frontend receives only whether a key exists, so the full key is not rendered in
 the UI. Configure data handling with TypeSafe directly.
+
+## Interview mode and delivery metrics
+
+Interview mode (plugin settings, default off) keeps delivery feedback opt-in: with it off,
+dictation into the editor behaves exactly as without this feature. The answer editor reads the
+saved setting each time it mounts, so a change applies to the next question editor that opens.
+The settings form saves the interview toggle and pause threshold on their own; a TypeSafe key
+is only needed to change the key. With it on, a dictated
+English answer is graded with delivery metrics computed in code from the word timings
+(`src/delivery.ts`, deterministic and fixture-tested): fillers per minute and words per
+minute over the speaking time from the first word's start to the last word's end, and every
+pause at or above the long-pause threshold (default 2.0 s, range 0.5–10 s) as
+`{afterWord, seconds}` measured from `words[i].end` to `words[i+1].start`. Fillers are the
+seven documented Deepgram spellings (uh, um, mhmm, mm-mm, uh-uh, uh-huh, nuh-uh), matched
+case-insensitively against the plain `word` field. Typed answers report delivery as
+`unavailable` with reason "typed answer"; non-English dictation (multilingual included) as
+"not available for this language" — filler words are requested for English dictation only.
+When metrics exist and a key is configured, the Jev request adds a `noul` for "filler rate
+high", the fix choice includes it as an option, and its probability appears on the answered
+card next to a Delivery section with the rates and pauses. Each dictation run times its words
+from its own start, so when a learner dictates an answer in several bursts the editor shifts
+each later run past the words already kept; the silence between bursts is not measured. An
+unreadable word list never fails grading: delivery reports `unavailable` and the literal
+reader's feedback is unchanged.
 
 ## Build and install
 

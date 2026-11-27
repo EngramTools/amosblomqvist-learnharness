@@ -1,4 +1,4 @@
-import { GAP_KINDS, type ExplainBackGap, type GapKind } from "./contract.ts";
+import { DELIVERY_CRITERION, GAP_KINDS, type DeliveryMetrics, type ExplainBackGap, type GapKind } from "./contract.ts";
 
 export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export const JEV_MODEL = "jev-latest";
@@ -12,13 +12,25 @@ export type JevState = {
   explanation: string;
   reconstruction: string;
   gaps: ExplainBackGap[];
+  /** Present only when interview mode produced delivery metrics; Jev's
+   *  "filler rate high" criterion is asked only over this state. */
+  metrics?: DeliveryMetrics;
 };
+
+/** Every criterion the fix choice may pick, in a stable order: the four
+ *  literal-reader gaps, plus filler rate only when metrics exist. */
+export function jevCriteria(metrics: DeliveryMetrics | undefined): readonly JevCriterion[] {
+  return metrics ? [...GAP_KINDS, DELIVERY_CRITERION] : GAP_KINDS;
+}
+
+/** Jev's fifth criterion, asked only when delivery metrics exist. */
+export type JevCriterion = GapKind | typeof DELIVERY_CRITERION;
 
 export type JevScores = {
   /** The versioned model that answered, for example "jev-1.14.0". */
   model: string;
-  criteria: Record<GapKind, number>;
-  fix: { criterion: GapKind; probability: number };
+  criteria: Record<GapKind, number> & { [DELIVERY_CRITERION]?: number };
+  fix: { criterion: JevCriterion; probability: number };
 };
 
 export type JevOptions = {
@@ -37,40 +49,46 @@ export class JevUnavailableError extends Error {
   }
 }
 
-const NOUL_INSTRUCTIONS: Record<GapKind, string> = {
+const NOUL_INSTRUCTIONS: Record<JevCriterion, string> = {
   "missing step": "Does the learner's explanation omit a premise or the step's conclusion?",
   "undefined term": "Does the learner's explanation use a term without defining it?",
   "wrong order": "Does the learner's explanation derive a fact before what it depends on?",
   "conclusion buried": "Is the step's conclusion present in the explanation but not stated as the conclusion?",
+  [DELIVERY_CRITERION]: "Does the dictated delivery — filler words or long pauses — distract from the explanation's content?",
 };
 
-const FIX_CRITERIA: Record<GapKind, string> = {
+const FIX_CRITERIA: Record<JevCriterion, string> = {
   "missing step": "A premise or the conclusion is omitted.",
   "undefined term": "A term is used without being defined.",
   "wrong order": "A fact is derived before what it depends on.",
   "conclusion buried": "The conclusion is present but not stated as the conclusion.",
+  [DELIVERY_CRITERION]: "Spoken delivery got in the way: many filler words or long pauses distract from the explanation.",
 };
 
 export type JevNoulQuestion = { type: "noul"; instructions: string };
-export type JevChoiceQuestion = { type: "choice"; instructions: string; criteria: Record<GapKind, string> };
+export type JevChoiceQuestion = { type: "choice"; instructions: string; criteria: Record<JevCriterion, string> };
 export type JevRequest = { model: string; state: JevState; questions: Record<string, JevNoulQuestion | JevChoiceQuestion> };
 
-export function buildJevRequest(state: JevState): JevRequest {
+export function buildJevRequest(state: JevRequest["state"]): JevRequest {
+  const criteria = jevCriteria(state.metrics);
   const questions: JevRequest["questions"] = {};
   for (const kind of GAP_KINDS) questions[kind] = { type: "noul", instructions: NOUL_INSTRUCTIONS[kind] };
+  if (state.metrics) questions[DELIVERY_CRITERION] = { type: "noul", instructions: NOUL_INSTRUCTIONS[DELIVERY_CRITERION] };
   questions[FIX_QUESTION] = {
     type: "choice",
     instructions: "Which single gap should the learner fix first in their next explanation?",
-    criteria: FIX_CRITERIA,
+    criteria: criteria.reduce<Record<JevCriterion, string>>((map, kind) => {
+      map[kind] = FIX_CRITERIA[kind];
+      return map;
+    }, {} as Record<JevCriterion, string>),
   };
   return {
     model: JEV_MODEL,
     state: {
-      step: state.step,
+      ...state,
       premises: [...state.premises],
-      explanation: state.explanation,
-      reconstruction: state.reconstruction,
       gaps: state.gaps.map(gap => ({ ...gap })),
+      ...(state.metrics ? { metrics: { ...state.metrics, pauses: state.metrics.pauses.map(pause => ({ ...pause })) } } : {}),
     },
     questions,
   };
@@ -151,9 +169,14 @@ function readResponse(value: unknown): JevScores {
     criteria[kind] = probability(answer.noul);
   }
   const fixAnswer = value.answers[FIX_QUESTION];
-  if (!record(fixAnswer) || fixAnswer.type !== "choice" || !isGapKind(fixAnswer.choice)) throw unreadable();
+  if (!record(fixAnswer) || fixAnswer.type !== "choice" || !isJevCriterion(fixAnswer.choice)) throw unreadable();
   if (!record(fixAnswer.probabilities)) throw unreadable();
   const chosen = probability(fixAnswer.probabilities[fixAnswer.choice]);
+  const delivery = value.answers[DELIVERY_CRITERION];
+  if (delivery !== undefined) {
+    if (!record(delivery) || delivery.type !== "noul") throw unreadable();
+    (criteria as Record<JevCriterion, number>)[DELIVERY_CRITERION] = probability(delivery.noul);
+  }
   return { model: value.model, criteria, fix: { criterion: fixAnswer.choice, probability: chosen } };
 }
 
@@ -164,6 +187,10 @@ function probability(value: unknown): number {
 
 function isGapKind(value: unknown): value is GapKind {
   return typeof value === "string" && (GAP_KINDS as readonly string[]).includes(value);
+}
+
+function isJevCriterion(value: unknown): value is JevCriterion {
+  return isGapKind(value) || value === DELIVERY_CRITERION;
 }
 
 function unreadable(): JevUnavailableError {

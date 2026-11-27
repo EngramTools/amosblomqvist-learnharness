@@ -162,13 +162,13 @@ test("saves the key in the data directory and grades through the registered grad
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevResponse()));
   const f = fixture({ jev: { endpoint: stub.url, timeoutMs: 500 } });
   try {
-    assert.deepEqual(f.handlers.get("set-typesafe-key")!({ key: `  ${API_KEY}  ` }), { hasTypesafeKey: true });
+    assert.deepEqual(f.handlers.get("set-typesafe-key")!({ key: `  ${API_KEY}  ` }), { hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 });
     const file = path.join(f.dataDirectory, "settings.json");
     assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { typesafeApiKey: API_KEY });
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-    assert.deepEqual(f.handlers.get("get-settings")!({}), { hasTypesafeKey: true });
+    assert.deepEqual(f.handlers.get("get-settings")!({}), { hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 });
     assert.equal(JSON.stringify(f.handlers.get("get-settings")!({})).includes(API_KEY), false);
-    assert.deepEqual(f.events, [{ hasTypesafeKey: true }]);
+    assert.deepEqual(f.events, [{ hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 }]);
 
     const result = await f.grade(gradingContext());
     assert.deepEqual(result, {
@@ -178,6 +178,7 @@ test("saves the key in the data directory and grades through the registered grad
         criteria,
         fix: { criterion: "missing step", probability: 0.82, wording },
       },
+      delivery: { status: "unavailable", reason: "Interview mode is off." },
     });
     const request = stub.requests[0]!.body as JevRequest;
     assert.deepEqual(request.state, {
@@ -205,11 +206,12 @@ test("no key leaves the literal feedback unchanged and marks scoring unavailable
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevResponse()));
   const f = fixture({ jev: { endpoint: stub.url } });
   try {
-    assert.deepEqual(f.handlers.get("get-settings")!({}), { hasTypesafeKey: false });
+    assert.deepEqual(f.handlers.get("get-settings")!({}), { hasTypesafeKey: false, interviewMode: false, pauseThresholdSeconds: 2 });
     const result = await f.grade(gradingContext());
     assert.deepEqual(result, {
       ...literalResult,
       scoring: { status: "unavailable", reason: "No TypeSafe API key is configured, so criterion scoring is unavailable." },
+      delivery: { status: "unavailable", reason: "Interview mode is off." },
     });
     assert.equal("criteria" in result.scoring, false);
     assert.equal("fix" in result.scoring, false);
@@ -273,6 +275,7 @@ test("a failed fix-wording call marks scoring unavailable instead of returning p
     assert.deepEqual(result, {
       ...literalResult,
       scoring: { status: "unavailable", reason: "The explain-back model test/default-model could not write the fix wording." },
+      delivery: { status: "unavailable", reason: "Interview mode is off." },
     });
   } finally {
     f.cleanup();

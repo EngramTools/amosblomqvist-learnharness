@@ -9,7 +9,7 @@ type Mount = (container: HTMLElement, signal: AbortSignal) => void | PluginClean
 
 type Call = { operation: string; input: unknown };
 
-function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
+function fixture(options: { failSave?: boolean; rejectWithKey?: string; failThreshold?: boolean } = {}) {
   const { document } = parseHTML("<!doctype html><html><body></body></html>");
   const calls: Call[] = [];
   let mount: Mount | undefined;
@@ -19,11 +19,12 @@ function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
   const cleanup = activate({
     call: async (operation: string, input?: unknown) => {
       calls.push({ operation, input });
-      if (operation === "get-settings") return { hasTypesafeKey: false };
+      if (operation === "get-settings") return { hasTypesafeKey: false, interviewMode: false, pauseThresholdSeconds: 2 };
+      if (options.failThreshold && operation === "set-pause-threshold") throw new Error("The pause threshold must be between 0.5 and 10 seconds.");
       if (options.failSave) {
         throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The key could not be saved.");
       }
-      return { hasTypesafeKey: true };
+      return { hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 };
     },
     onNotification(listener: (event: { topic: string; data: unknown }) => void) {
       notify = listener;
@@ -70,7 +71,7 @@ test("the settings row masks the key, states the data sharing, and never renders
   const dispose = f.mount!(container, controller.signal) as () => void;
   await flush();
 
-  const input = container.querySelector("input")!;
+  const input = container.querySelector("input[type=password]") as HTMLInputElement;
   assert.equal(input.getAttribute("type"), "password");
   assert.equal(input.value, "");
   assert.match(container.textContent!, new RegExp(TYPESAFE_KEY_LABEL));
@@ -85,12 +86,16 @@ test("the settings row masks the key, states the data sharing, and never renders
   await flush();
 
   assert.deepEqual(f.calls[1], { operation: "set-typesafe-key", input: { key: "sk-settings-secret" } });
+  assert.deepEqual(f.calls.slice(2), [
+    { operation: "set-interview-mode", input: { mode: false } },
+    { operation: "set-pause-threshold", input: { seconds: 2 } },
+  ]);
   assert.equal(input.value, "");
   assert.match(container.textContent!, /Saved\. Learner text is sent to TypeSafe for scoring\./);
   assert.equal(container.textContent!.includes("sk-settings-secret"), false);
 
   f.notify!({ topic: "settings-changed", data: { hasTypesafeKey: true } });
-  assert.match(container.textContent!, /Replace key/);
+  assert.match((container.querySelector("input[type=password]") as HTMLInputElement).placeholder, /Saved key/);
   dispose();
   assert.equal(container.textContent, "");
   assert.equal(f.notify, undefined);
@@ -105,7 +110,7 @@ test("a save failure never echoes the key into the status", async () => {
   f.mount!(container, controller.signal);
   await flush();
 
-  const input = container.querySelector("input")!;
+  const input = container.querySelector("input") as HTMLInputElement;
   input.value = key;
   const submit = f.document.createEvent("Event");
   submit.initEvent("submit", true, true);
@@ -114,5 +119,46 @@ test("a save failure never echoes the key into the status", async () => {
 
   assert.match(container.textContent!, /The key could not be saved\./);
   assert.equal(container.textContent!.includes(key), false);
+  controller.abort();
+});
+
+async function submitBlankKey(f: ReturnType<typeof fixture>, container: HTMLElement) {
+  const submit = f.document.createEvent("Event");
+  submit.initEvent("submit", true, true);
+  container.querySelector("form")!.dispatchEvent(submit);
+  await flush();
+}
+
+test("delivery settings save without a key and skip the key operation", async () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.mount!(container, controller.signal);
+  await flush();
+
+  (container.querySelector("input[type=checkbox]") as HTMLInputElement).checked = true;
+  await submitBlankKey(f, container);
+
+  assert.deepEqual(f.calls.slice(1), [
+    { operation: "set-interview-mode", input: { mode: true } },
+    { operation: "set-pause-threshold", input: { seconds: 2 } },
+  ]);
+  assert.match(container.textContent!, /Saved\./);
+  controller.abort();
+});
+
+test("a delivery save failure is shown instead of a success message", async () => {
+  const f = fixture({ failThreshold: true });
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.mount!(container, controller.signal);
+  await flush();
+
+  await submitBlankKey(f, container);
+
+  assert.match(container.textContent!, /between 0\.5 and 10 seconds/);
+  assert.equal(/Saved\./.test(container.textContent!), false);
   controller.abort();
 });

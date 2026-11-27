@@ -7,7 +7,7 @@ import type { ExplainBackAnswer, ExplainBackPayload } from "../src/contract.ts";
 
 type Renderer = PluginQuestionRenderer<ExplainBackPayload, ExplainBackAnswer>;
 
-function fixture() {
+function fixture(call?: (operation: string) => Promise<unknown>) {
   const { document } = parseHTML("<!doctype html><html><body></body></html>");
   const markdowns: string[] = [];
   let renderer: Renderer | undefined;
@@ -30,6 +30,7 @@ function fixture() {
     registerSettings() {
       return () => {};
     },
+    ...(call ? { call } : {}),
   } as unknown as PluginFrontendContext);
   return { document, markdowns, renderer: renderer!, cleanup };
 }
@@ -79,13 +80,13 @@ test("the pending question shows the prompt, the step and every premise", () => 
   dispose();
 });
 
-test("the free-text editor publishes readiness, appends dictation as text, and applies controlled updates", () => {
+test("the free-text editor publishes readiness, appends dictation as text, and applies controlled updates", async () => {
   const f = fixture();
   const container = f.document.createElement("div");
   f.document.body.append(container);
   const controller = new AbortController();
   const { props, states } = editorFixture(controller.signal);
-  const handle = f.renderer.mountAnswerEditor(container, props) as PluginQuestionEditorHandle;
+  const handle = await f.renderer.mountAnswerEditor(container, props) as PluginQuestionEditorHandle;
 
   const textarea = container.querySelector("textarea")!;
   assert.equal(textarea.getAttribute("aria-label"), "Your explanation");
@@ -112,6 +113,27 @@ test("the free-text editor publishes readiness, appends dictation as text, and a
   handle.focus();
   handle.dispose();
   assert.equal(container.textContent, "");
+});
+
+test("the registered editor opts into dictated words only when the saved interview mode is on", async () => {
+  const settings = (interviewMode: boolean) => ({ hasTypesafeKey: false, interviewMode, pauseThresholdSeconds: 2 });
+  const cases: [string, (operation: string) => Promise<unknown>, boolean][] = [
+    ["on", async () => settings(true), true],
+    ["off", async () => settings(false), false],
+    ["unreadable", async () => ({ hasTypesafeKey: false }), false],
+    ["failing", async () => { throw new Error("backend unavailable"); }, false],
+  ];
+  for (const [name, call, wantsWords] of cases) {
+    const f = fixture(call);
+    const container = f.document.createElement("div");
+    f.document.body.append(container);
+    const controller = new AbortController();
+    const { props } = editorFixture(controller.signal);
+    const handle = await f.renderer.mountAnswerEditor(container, props) as PluginQuestionEditorHandle & { wantsDictatedWords?: boolean };
+    assert.equal(handle.wantsDictatedWords === true, wantsWords, name);
+    assert.equal(typeof handle.appendDictatedSpeech === "function", wantsWords, name);
+    handle.dispose();
+  }
 });
 
 test("the answered card shows the saved explanation, reconstruction and labelled gaps", () => {

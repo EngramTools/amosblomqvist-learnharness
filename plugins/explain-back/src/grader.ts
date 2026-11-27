@@ -12,11 +12,15 @@ import {
   readAnswer,
   readExplainBackResult,
   readPayload,
+  readProvenance,
   RESULT_VERSION,
+  type DeliveryMetrics,
+  type ExplainBackDelivery,
   type ExplainBackPayload,
   type ExplainBackResult,
   type ExplainBackScoring,
 } from "./contract.ts";
+import { computeDeliveryMetrics, isEnglishDictationLanguage } from "./delivery.ts";
 import { JevUnavailableError, scoreExplainBack, type JevOptions, type JevScores } from "./jev.ts";
 
 type LiteralReaderContext = Pick<PluginBackendContext, "inference" | "learning">;
@@ -26,6 +30,9 @@ export type JevRuntime = Pick<JevOptions, "endpoint" | "fetch" | "timeoutMs">;
 
 export type ExplainBackGradeOptions = {
   readTypesafeKey: () => string | undefined;
+  /** Interview mode and the pause threshold, both plugin settings. */
+  interviewMode?: boolean;
+  pauseThresholdSeconds?: number;
   jev?: JevRuntime;
 };
 
@@ -34,6 +41,8 @@ type FixWordingInput = {
   explanation: string;
   result: ExplainBackResult;
   scores: JevScores;
+  /** Present only on dictated interview-mode answers with readable timings. */
+  metrics?: DeliveryMetrics;
 };
 
 export const fixWordingInstructions = [
@@ -168,6 +177,10 @@ export async function gradeExplainBack<Q, A>(
   grading.signal.throwIfAborted();
   const payload = readPayload(grading.input.payload);
   const answer = readAnswer(grading.answer);
+  const delivery = computeDelivery(grading.answer as unknown as { language?: string; words?: unknown }, {
+    interviewMode: options.interviewMode ?? false,
+    pauseThresholdSeconds: options.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
+  });
   const model = await resolveGradingModel(context, grading.chatId);
   const message = await context.inference.complete({
     model,
@@ -187,9 +200,37 @@ export async function gradeExplainBack<Q, A>(
   if (!replyText) throw new Error("The literal reader returned no text.");
   const result = readExplainBackResult(parseLiteralReaderReply(replyText));
   if (!result) throw new Error(`The literal reader returned an invalid result. Expected version ${RESULT_VERSION} with a reconstruction and gaps of a known kind.`);
-  const input = { payload, explanation: answer.text, result };
+  const input = { payload, explanation: answer.text, result, metrics: delivery.status === "ok" ? deliveryMetrics(delivery) : undefined };
   const scoring = await scoreLiteracy({ context, model, signal: grading.signal, input, options });
-  return { ...result, scoring };
+  return { ...result, scoring, delivery };
+}
+
+/** Settings default; the backend clamps persisted values into [0.5, 10]. */
+export const DEFAULT_PAUSE_THRESHOLD_SECONDS = 2.0;
+
+/** Delivery is interview-mode-only: metrics require unedited dictated
+ *  English speech. Every other case is a named unavailable reason. */
+export function computeDelivery(
+  answer: { language?: string; words?: unknown },
+  options: { interviewMode: boolean; pauseThresholdSeconds: number },
+): ExplainBackDelivery {
+  if (!options.interviewMode) return { status: "unavailable", reason: "Interview mode is off." };
+  let provenance: ReturnType<typeof readProvenance>;
+  try {
+    provenance = readProvenance(answer.language === undefined && answer.words === undefined ? undefined : answer);
+  } catch {
+    // Delivery is optional feedback: unreadable timings never abort grading.
+    return { status: "unavailable", reason: "the dictation timings could not be read" };
+  }
+  if (!provenance) return { status: "unavailable", reason: "typed answer" };
+  if (!isEnglishDictationLanguage(provenance.language)) return { status: "unavailable", reason: "not available for this language" };
+  const metrics = computeDeliveryMetrics(provenance.words, options.pauseThresholdSeconds);
+  return { status: "ok", ...metrics };
+}
+
+/** Only the metric fields reach Jev; `status` is a result-shape detail. */
+function deliveryMetrics({ fillersPerMin, wordsPerMin, pauses }: Extract<ExplainBackDelivery, { status: "ok" }>): DeliveryMetrics {
+  return { fillersPerMin, wordsPerMin, pauses };
 }
 
 /** Jev failure never discards the literal-reader feedback; it only hides scoring. */
@@ -204,6 +245,7 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
       explanation: request.input.explanation,
       reconstruction: request.input.result.reconstruction,
       gaps: request.input.result.gaps,
+      ...(request.input.metrics ? { metrics: request.input.metrics } : {}),
     }, { apiKey: key, signal: request.signal, ...request.options.jev });
   } catch (error) {
     request.signal.throwIfAborted();

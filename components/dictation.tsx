@@ -413,6 +413,9 @@ export function useDictation({ append, destination = "primary", disabled = false
 	 *  delivery shape key off it. Undefined by default — every unchanged
 	 *  target keeps text-only. */
 	const speechRef = useRef<DictationDestination["appendSpeech"]>(undefined);
+	/** The resolved language of the live run, captured at start so the flush
+	 *  can attach it to the opted-in `{text, words}` delivery. */
+	const languageRef = useRef<DictationLanguage | undefined>(undefined);
 	/** Resolvers waiting for the run to fully end (finish(), owner
 	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
 	const waitersRef = useRef<Array<{ resolve: () => void; reject: (error: unknown) => void }>>([]);
@@ -421,14 +424,14 @@ export function useDictation({ append, destination = "primary", disabled = false
 
 	/** Flush into this run's fixed destination. Called exactly once at cleanup; the
 	 *  buffer clears itself so double-cleanup is a no-op. */
-	const flush = useCallback((): unknown => {
+	const flush = useCallback((language?: DictationLanguage): unknown => {
 		if (bufferRef.current.length === 0) return;
 		const text = bufferRef.current.join(" ");
 		bufferRef.current = [];
 		const destination = destinationRef.current ?? { id: "main", append: appendRef.current };
 		const words = wordsRef.current;
 		wordsRef.current = [];
-		return speechRef.current ? speechRef.current({ text, words }) : destination.append(text);
+		return speechRef.current ? speechRef.current({ text, words, ...(language ? { language } : {}) }) : destination.append(text);
 	}, []);
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
@@ -442,7 +445,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			: null;
 		appendPendingRef.current = false;
 		try {
-			appended = flush(); // exactly one append, after the final transcript
+			appended = flush(languageRef.current); // exactly one append, after the final transcript
 		} catch (error) {
 			failure = { error };
 		}
@@ -460,7 +463,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// The AudioContext is app-lifetime (mitigation C) — nodes die, it stays.
 		const ws = wsRef.current;
 		wsRef.current = null;
-		if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+		const socketOpen = ws !== null && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
+		if (socketOpen) {
 			try {
 				ws.close();
 			} catch {}
@@ -586,6 +590,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 		bufferRef.current = []; // fresh run, fresh buffer (round 2)
 		wordsRef.current = []; // fresh run, fresh timings
 		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
+		languageRef.current = undefined; // resolved below, once the preference lands
 		const gen = ++genRef.current;
 		let language: DictationLanguage;
 		try {
@@ -597,6 +602,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 			return;
 		}
 		if (gen !== genRef.current) return;
+		languageRef.current = language;
 
 		// Mitigation D: the warm token (pre-minted at mount / after the last
 		// run) resolves ~instantly; a cold/keyless mint surfaces below. The

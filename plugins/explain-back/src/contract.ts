@@ -18,17 +18,37 @@ export type ExplainBackAnswer = {
 export const GAP_KINDS = ["missing step", "undefined term", "wrong order", "conclusion buried"] as const;
 export type GapKind = (typeof GAP_KINDS)[number];
 export type ExplainBackGap = { kind: GapKind; detail: string };
-export type ExplainBackCriterionScores = Record<GapKind, number>;
-export type ExplainBackFix = { criterion: GapKind; probability: number; wording: string };
+/** The four literal-reader gaps always score; the delivery criterion scores
+ *  only on dictated interview-mode answers, so it stays optional here. */
+export type ExplainBackCriterionScores = Record<GapKind, number> & { [DELIVERY_CRITERION]?: number };
+export type ExplainBackFix = { criterion: GapKind | typeof DELIVERY_CRITERION; probability: number; wording: string };
 export type ExplainBackScoring =
   | { status: "ok"; criteria: ExplainBackCriterionScores; fix: ExplainBackFix }
   | { status: "unavailable"; reason: string };
+
+/** Jev's fifth criterion, asked only when delivery metrics exist. */
+export const DELIVERY_CRITERION = "filler rate high";
+export type DeliveryPause = { afterWord: string; seconds: number };
+export type DeliveryMetrics = { fillersPerMin: number; wordsPerMin: number; pauses: DeliveryPause[] };
+export type ExplainBackDelivery =
+  | { status: "ok"; fillersPerMin: number; wordsPerMin: number; pauses: DeliveryPause[] }
+  | { status: "unavailable"; reason: string };
+
+/** Per-dictation provenance, present on dictated answers only. An
+ *  edit through `onChange` after the last dictation delivery marks the
+ *  timing provenance lost: the text is no longer verbatim speech. */
+export type DictationProvenance = { language: string; words: DeliveryWord[] };
+export type DeliveryWord = { word: string; start: number; end: number; confidence: number };
+
 export type ExplainBackResult = {
   version: typeof RESULT_VERSION;
   reconstruction: string;
   gaps: ExplainBackGap[];
   /** Absent only on results saved before scoring was added. */
   scoring?: ExplainBackScoring;
+  /** Absent only on results saved before interview mode existed; every newer
+   *  result carries it, as `unavailable` with a reason when metrics do not apply. */
+  delivery?: ExplainBackDelivery;
 };
 
 /**
@@ -60,6 +80,30 @@ export function readAnswer(value: unknown): ExplainBackAnswer {
   return { text: value.text };
 }
 
+/** Narrow dictated provenance; `undefined` means a typed answer. Words must
+ *  carry finite, ordered `word`/`start`/`end`/`confidence` fields. */
+export function readProvenance(value: unknown): DictationProvenance | undefined {
+  if (value === undefined) return undefined;
+  if (!record(value) || typeof value.language !== "string" || !Array.isArray(value.words)) {
+    throw new Error("Explain-back dictation provenance must carry a language and its words.");
+  }
+  const words: DeliveryWord[] = [];
+  let previousEnd = Number.NEGATIVE_INFINITY;
+  for (const raw of value.words) {
+    if (!record(raw) || typeof raw.word !== "string" || raw.word === "") throw new Error("Explain-back dictation words must be named.");
+    if (!isFiniteNumber(raw.start) || !isFiniteNumber(raw.end) || !isFiniteNumber(raw.confidence) || raw.end < raw.start || raw.start < previousEnd) {
+      throw new Error("Explain-back dictation word timings must be finite and ordered.");
+    }
+    previousEnd = raw.end;
+    words.push({ word: raw.word, start: raw.start, end: raw.end, confidence: raw.confidence });
+  }
+  return { language: value.language, words };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 export const definition = {
   id: QUESTION_TYPE_ID,
   label: "Explain-back check",
@@ -86,6 +130,22 @@ export const definition = {
     type: "object",
     properties: {
       text: { type: "string", pattern: "\\S", description: "The learner's free-text explanation." },
+      language: { type: "string", description: "Dictation language code, present only on dictated answers." },
+      words: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            word: { type: "string" },
+            start: { type: "number" },
+            end: { type: "number" },
+            confidence: { type: "number" },
+          },
+          required: ["word", "start", "end", "confidence"],
+          additionalProperties: false,
+        },
+        description: "Per-word timings of the dictation, in order, present only on dictated answers whose text is unedited.",
+      },
     },
     required: ["text"],
     additionalProperties: false,
@@ -125,14 +185,24 @@ function readGap(value: unknown): ExplainBackGap | null {
 }
 
 function readCriterionScores(value: unknown): ExplainBackCriterionScores | null {
-  if (!record(value) || Object.keys(value).length !== GAP_KINDS.length) return null;
+  if (!record(value)) return null;
+  const known = Object.keys(value).filter(key => key !== DELIVERY_CRITERION);
+  if (known.length !== GAP_KINDS.length) return null;
   const scores = {} as ExplainBackCriterionScores;
   for (const kind of GAP_KINDS) {
     const probability = value[kind];
-    if (typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) return null;
+    if (!isProbability(probability)) return null;
     scores[kind] = probability;
   }
+  if (value[DELIVERY_CRITERION] !== undefined) {
+    if (!isProbability(value[DELIVERY_CRITERION])) return null;
+    scores[DELIVERY_CRITERION] = value[DELIVERY_CRITERION];
+  }
   return scores;
+}
+
+function isProbability(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function readScoring(value: unknown): ExplainBackScoring | null {
@@ -144,9 +214,30 @@ function readScoring(value: unknown): ExplainBackScoring | null {
   const criteria = readCriterionScores(value.criteria);
   if (!criteria || !record(value.fix)) return null;
   const { criterion, probability, wording } = value.fix;
-  if (!isGapKind(criterion) || typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) return null;
+  if (!isFixCriterion(criterion) || !isProbability(probability)) return null;
   if (typeof wording !== "string" || !isReady(wording)) return null;
   return { status: "ok", criteria, fix: { criterion, probability, wording } };
+}
+
+/** The fix may name a literal-reader gap or the delivery criterion. */
+function isFixCriterion(value: unknown): value is ExplainBackFix["criterion"] {
+  return isGapKind(value) || value === DELIVERY_CRITERION;
+}
+
+/** Delivery is optional; present values must be fully readable or the saved result is rejected. */
+function readDelivery(value: unknown): ExplainBackDelivery | null {
+  if (!record(value)) return null;
+  if (value.status === "unavailable") {
+    return typeof value.reason === "string" && isReady(value.reason) ? { status: "unavailable", reason: value.reason } : null;
+  }
+  if (value.status !== "ok") return null;
+  if (!isFiniteNumber(value.fillersPerMin) || !isFiniteNumber(value.wordsPerMin) || !Array.isArray(value.pauses)) return null;
+  const pauses: DeliveryPause[] = [];
+  for (const raw of value.pauses) {
+    if (!record(raw) || typeof raw.afterWord !== "string" || raw.afterWord === "" || !isFiniteNumber(raw.seconds) || raw.seconds < 0) return null;
+    pauses.push({ afterWord: raw.afterWord, seconds: raw.seconds });
+  }
+  return { status: "ok", fillersPerMin: value.fillersPerMin, wordsPerMin: value.wordsPerMin, pauses };
 }
 
 /** Validate a saved or model-produced result. Null means unreadable feedback. An empty reconstruction is valid: a fragmentary explanation can establish nothing. */
@@ -160,7 +251,10 @@ export function readExplainBackResult(value: unknown): ExplainBackResult | null 
   }
   const scoring = value.scoring === undefined ? undefined : readScoring(value.scoring);
   if (value.scoring !== undefined && !scoring) return null;
+  const delivery = value.delivery === undefined ? undefined : readDelivery(value.delivery);
+  if (value.delivery !== undefined && !delivery) return null;
   const result: ExplainBackResult = { version: RESULT_VERSION, reconstruction: value.reconstruction, gaps };
   if (scoring) result.scoring = scoring;
+  if (delivery) result.delivery = delivery;
   return result;
 }

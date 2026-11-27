@@ -1,15 +1,23 @@
 import type { PluginFrontendContext, PluginQuestionGradingOutcome, PluginQuestionMountContext } from "learnharness-plugin-api";
-import { GAP_KINDS, readExplainBackResult, type ExplainBackAnswer, type ExplainBackPayload, type ExplainBackResult, type ExplainBackScoring, type GapKind } from "./contract.ts";
+import { DELIVERY_CRITERION, GAP_KINDS, readExplainBackResult, type ExplainBackAnswer, type ExplainBackDelivery, type ExplainBackPayload, type ExplainBackResult, type ExplainBackScoring, type GapKind } from "./contract.ts";
+import { formatPause, formatRate } from "./delivery.ts";
 import { mountQuestionContent } from "./question-view.ts";
 
 type MarkdownUi = Pick<PluginFrontendContext["ui"], "mountMarkdown">;
 
-export const GAP_LABELS: Record<GapKind, string> = {
+export const GAP_LABELS: Record<GapKind | typeof DELIVERY_CRITERION, string> = {
   "missing step": "Missing step",
   "undefined term": "Undefined term",
   "wrong order": "Wrong order",
   "conclusion buried": "Conclusion buried",
+  [DELIVERY_CRITERION]: "Filler rate high",
 };
+
+/** The scored list: the four gaps, then delivery when it scored. */
+export function scoredCriteria(scoring: Extract<ExplainBackScoring, { status: "ok" }>): (GapKind | typeof DELIVERY_CRITERION)[] {
+  const extra: (GapKind | typeof DELIVERY_CRITERION)[] = scoring.criteria[DELIVERY_CRITERION] === undefined ? [] : [DELIVERY_CRITERION];
+  return [...GAP_KINDS, ...extra];
+}
 
 function section(document: Document, className: string, heading: string): HTMLElement {
   const element = document.createElement("section");
@@ -44,8 +52,9 @@ function mountCriterionScores(document: Document, container: HTMLElement, scorin
   const scores = section(document, "lh-explain-back__scores", "Criterion probabilities");
   const list = document.createElement("ul");
   list.className = "lh-explain-back__score-list";
-  for (const kind of GAP_KINDS) {
+  for (const kind of scoredCriteria(scoring)) {
     const probability = scoring.criteria[kind];
+    if (probability === undefined) continue;
     const item = document.createElement("li");
     item.className = "lh-explain-back__score";
     item.dataset.criterion = kind;
@@ -72,6 +81,19 @@ function mountCriterionScores(document: Document, container: HTMLElement, scorin
   ));
   fix.append(paragraph(document, "lh-explain-back__prose", scoring.fix.wording));
   container.append(fix);
+}
+
+function mountDelivery(document: Document, container: HTMLElement, delivery: ExplainBackDelivery): void {
+  if (delivery.status !== "ok") return;
+  const section_ = section(document, "lh-explain-back__delivery", "Delivery");
+  const lines: string[] = [
+    `Fillers: ${formatRate(delivery.fillersPerMin)}`,
+    `Words: ${formatRate(delivery.wordsPerMin)}`,
+  ];
+  if (delivery.pauses.length === 0) lines.push("No long pauses.");
+  else for (const pause of delivery.pauses) lines.push(formatPause(pause));
+  section_.append(paragraph(document, "lh-explain-back__prose", lines.join("\n")));
+  container.append(section_);
 }
 
 function mountScoring(document: Document, container: HTMLElement, scoring: ExplainBackScoring): void {
@@ -115,6 +137,7 @@ function mountResult(document: Document, container: HTMLElement, result: Explain
   }
   container.append(gaps);
   if (result.scoring) mountScoring(document, container, result.scoring);
+  if (result.delivery) mountDelivery(document, container, result.delivery);
 }
 
 export function mountGrading(container: HTMLElement, grading: PluginQuestionGradingOutcome, signal: AbortSignal): () => void {
