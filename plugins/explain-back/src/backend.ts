@@ -10,30 +10,51 @@ export type ExplainBackBackendOptions = {
   jev?: JevRuntime;
 };
 
-type Settings = { typesafeApiKey?: string };
+type Settings = { typesafeApiKey?: string; interviewMode?: boolean; pauseThresholdSeconds?: number };
 
-type PublicSettings = { hasTypesafeKey: boolean };
+type PublicSettings = { hasTypesafeKey: boolean; interviewMode: boolean; pauseThresholdSeconds: number };
+
+/** Pause threshold bounds, in seconds; outside values are rejected. */
+export const PAUSE_THRESHOLD_MIN_SECONDS = 0.5;
+export const PAUSE_THRESHOLD_MAX_SECONDS = 10;
+const DEFAULT_PAUSE_THRESHOLD_SECONDS = 2.0;
+
+function readPauseThreshold(input: unknown): number {
+  if (typeof input !== "number" || !Number.isFinite(input) || input < PAUSE_THRESHOLD_MIN_SECONDS || input > PAUSE_THRESHOLD_MAX_SECONDS) {
+    throw new Error(`The pause threshold must be between ${PAUSE_THRESHOLD_MIN_SECONDS} and ${PAUSE_THRESHOLD_MAX_SECONDS} seconds.`);
+  }
+  return input;
+}
 
 const settingsFile = (directory: string) => path.join(directory, "settings.json");
 
 function loadSettings(directory: string): Settings {
   try {
     const value: unknown = JSON.parse(fs.readFileSync(settingsFile(directory), "utf8"));
-    if (!record(value) || typeof value.typesafeApiKey !== "string") return {};
-    const key = value.typesafeApiKey.trim();
-    return key ? { typesafeApiKey: key } : {};
+    if (!record(value)) return {};
+    const settings: Settings = {};
+    if (typeof value.typesafeApiKey === "string") {
+      const key = value.typesafeApiKey.trim();
+      if (key) settings.typesafeApiKey = key;
+    }
+    if (typeof value.interviewMode === "boolean") settings.interviewMode = value.interviewMode;
+    if (typeof value.pauseThresholdSeconds === "number" && Number.isFinite(value.pauseThresholdSeconds)
+      && value.pauseThresholdSeconds >= PAUSE_THRESHOLD_MIN_SECONDS && value.pauseThresholdSeconds <= PAUSE_THRESHOLD_MAX_SECONDS) {
+      settings.pauseThresholdSeconds = value.pauseThresholdSeconds;
+    }
+    return settings;
   } catch {
     // Scoring is optional: an absent or unreadable key store means no key.
     return {};
   }
 }
 
-function saveKey(directory: string, key: string): void {
+function saveSettings(directory: string, settings: Settings): void {
   const file = settingsFile(directory);
   fs.mkdirSync(directory, { recursive: true });
   const temporary = path.join(directory, `.settings-${randomUUID()}.tmp`);
   try {
-    fs.writeFileSync(temporary, JSON.stringify({ typesafeApiKey: key }) + "\n", { flag: "wx", mode: 0o600 });
+    fs.writeFileSync(temporary, JSON.stringify(settings) + "\n", { flag: "wx", mode: 0o600 });
     fs.renameSync(temporary, file);
   } finally {
     fs.rmSync(temporary, { force: true });
@@ -41,7 +62,11 @@ function saveKey(directory: string, key: string): void {
 }
 
 function publicSettings(settings: Settings): PublicSettings {
-  return { hasTypesafeKey: Boolean(settings.typesafeApiKey) };
+  return {
+    hasTypesafeKey: Boolean(settings.typesafeApiKey),
+    interviewMode: settings.interviewMode ?? false,
+    pauseThresholdSeconds: settings.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
+  };
 }
 
 /** Never echo the key, including from validation and transport failures. */
@@ -66,8 +91,30 @@ export function activate(ctx: PluginBackendContext, options: ExplainBackBackendO
   const set = ctx.handle("set-typesafe-key", input => {
     assertActive();
     const key = readKey(input);
-    saveKey(ctx.dataDirectory, key);
+    saveSettings(ctx.dataDirectory, { ...settings, typesafeApiKey: key });
     settings.typesafeApiKey = key;
+    const published = publicSettings(settings);
+    ctx.events.emit("settings-changed", published);
+    return published;
+  });
+  const isModeInput = (input: unknown): input is { mode: boolean } =>
+    typeof input === "object" && input !== null && "mode" in input && typeof input.mode === "boolean";
+  const isThresholdInput = (input: unknown): input is { seconds: unknown } =>
+    typeof input === "object" && input !== null && "seconds" in input;
+  const setInterviewMode = ctx.handle("set-interview-mode", input => {
+    assertActive();
+    if (!isModeInput(input)) throw new Error("Interview mode must be a boolean.");
+    settings.interviewMode = input.mode;
+    saveSettings(ctx.dataDirectory, settings);
+    const published = publicSettings(settings);
+    ctx.events.emit("settings-changed", published);
+    return published;
+  });
+  const setPauseThreshold = ctx.handle("set-pause-threshold", input => {
+    assertActive();
+    if (!isThresholdInput(input)) throw new Error("Expected a pause threshold value.");
+    settings.pauseThresholdSeconds = readPauseThreshold(input.seconds);
+    saveSettings(ctx.dataDirectory, settings);
     const published = publicSettings(settings);
     ctx.events.emit("settings-changed", published);
     return published;
@@ -78,17 +125,19 @@ export function activate(ctx: PluginBackendContext, options: ExplainBackBackendO
       ...definition,
       gradeAnswer: context => gradeExplainBack(ctx, context, {
         readTypesafeKey: () => settings.typesafeApiKey,
+        interviewMode: settings.interviewMode ?? false,
+        pauseThresholdSeconds: settings.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
         jev: options.jev,
       }),
     });
   } catch (error) {
-    get(); set();
+    get(); set(); setInterviewMode(); setPauseThreshold();
     throw error;
   }
   return () => {
     if (disposed) return;
     disposed = true;
-    unregister(); get(); set();
+    unregister(); get(); set(); setInterviewMode(); setPauseThreshold();
   };
 }
 

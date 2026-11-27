@@ -94,6 +94,10 @@ export interface DictatedWord {
 export interface DictatedSpeech {
 	readonly text: string;
 	readonly words: readonly DictatedWord[];
+	/** The dictation language of the run that produced this final. Present
+	 *  only on opted-in ({text, words}) deliveries; plain-text targets never
+	 *  see it, so the default path's output shape is unchanged. */
+	readonly language?: DictationLanguage;
 }
 
 export interface DeepgramListenOptions {

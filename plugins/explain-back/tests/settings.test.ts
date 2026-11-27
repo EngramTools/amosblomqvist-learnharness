@@ -19,11 +19,11 @@ function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
   const cleanup = activate({
     call: async (operation: string, input?: unknown) => {
       calls.push({ operation, input });
-      if (operation === "get-settings") return { hasTypesafeKey: false };
+      if (operation === "get-settings") return { hasTypesafeKey: false, interviewMode: false, pauseThresholdSeconds: 2 };
       if (options.failSave) {
         throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The key could not be saved.");
       }
-      return { hasTypesafeKey: true };
+      return { hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 };
     },
     onNotification(listener: (event: { topic: string; data: unknown }) => void) {
       notify = listener;
@@ -70,7 +70,7 @@ test("the settings row masks the key, states the data sharing, and never renders
   const dispose = f.mount!(container, controller.signal) as () => void;
   await flush();
 
-  const input = container.querySelector("input")!;
+  const input = container.querySelector("input[type=password]") as HTMLInputElement;
   assert.equal(input.getAttribute("type"), "password");
   assert.equal(input.value, "");
   assert.match(container.textContent!, new RegExp(TYPESAFE_KEY_LABEL));
@@ -85,6 +85,10 @@ test("the settings row masks the key, states the data sharing, and never renders
   await flush();
 
   assert.deepEqual(f.calls[1], { operation: "set-typesafe-key", input: { key: "sk-settings-secret" } });
+  assert.deepEqual(f.calls.slice(2), [
+    { operation: "set-interview-mode", input: { mode: false } },
+    { operation: "set-pause-threshold", input: { seconds: 2 } },
+  ]);
   assert.equal(input.value, "");
   assert.match(container.textContent!, /Saved\. Learner text is sent to TypeSafe for scoring\./);
   assert.equal(container.textContent!.includes("sk-settings-secret"), false);
@@ -105,7 +109,7 @@ test("a save failure never echoes the key into the status", async () => {
   f.mount!(container, controller.signal);
   await flush();
 
-  const input = container.querySelector("input")!;
+  const input = container.querySelector("input") as HTMLInputElement;
   input.value = key;
   const submit = f.document.createEvent("Event");
   submit.initEvent("submit", true, true);
