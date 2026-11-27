@@ -1,11 +1,5 @@
 # Plugin question tools — API v1 contract
 
-> ADR (operator, 2026-11-26): dictation word-timing opt-in. A plugin question
-> editor opts in with an optional `wantsDictatedWords: boolean` on the editor
-> handle, read at dictation start; the core delivers `{text, words}` to
-> opted-in editors only (every other target keeps plain text) and gates
-> `filler_words=true` by language (English only).
-
 Custom teaching questions share the native question lifecycle. This contract describes
 the matching source/build. Match the target app using the downloaded skill's `bundle.json`;
 API v1 alone does not identify every available capability. Exact types live in
@@ -206,7 +200,10 @@ handle/publication; schema-valid falsy/empty values may qualify. Drafts need not
 the schema. `empty` keeps no value; use `unready` to retain incomplete text.
 
 Required handle: `update({answer,active})`, `focus()`, `dispose()`; optional
-`handleKeyDown(key): "handled" | "pass"`, `appendTranscript(text)` (sync/async).
+`handleKeyDown(key): "handled" | "pass"`, `appendTranscript(text)` (sync/async),
+`wantsDictatedWords?: boolean` (opt-in: the editor accepts per-word timings and
+wants Deepgram filler words requested — English only, gated by the core; without
+it the editor keeps receiving plain transcript text).
 Apply controlled updates without echoing publication or resetting identical selection/
 composition. Async mounts/late callbacks are exact-occurrence/generation scoped: obsolete
 handles cannot publish, focus, consume keys or receive speech.
