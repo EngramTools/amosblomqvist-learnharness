@@ -1,10 +1,5 @@
 import type { PluginQuestionAnswerState, PluginQuestionEditorHandle, PluginQuestionEditorProps } from "learnharness-plugin-api";
-import { isReady, type DeliveryWord, type ExplainBackPayload } from "./contract.ts";
-
-/** Provenance of an unedited dictation, published with the answer. An edit
- *  after the last dictation delivery drops it: the text is no longer the
- *  verbatim speech the timings describe. */
-export type DictationProvenance = { language: string; words: DeliveryWord[] };
+import { isReady, readProvenance, type DeliveryWord, type DictationProvenance, type ExplainBackPayload } from "./contract.ts";
 
 export type EditorOptions = {
   /** Interview mode: opt in to `{text, words}` dictation and keep timings. */
@@ -18,6 +13,18 @@ function answerText(answer: PluginQuestionAnswerState): string {
     throw new Error("Explain-back answers must contain explanation text.");
   }
   return value.text;
+}
+
+/** The provenance a saved answer already carries (a remounted or restored
+ *  editor must republish it, not strip it). Unreadable timings read as none. */
+function answerProvenance(answer: PluginQuestionAnswerState): DictationProvenance | undefined {
+  if (answer.status === "empty") return undefined;
+  const value = answer.value as Record<string, unknown>;
+  try {
+    return readProvenance(value.language === undefined && value.words === undefined ? undefined : value);
+  } catch {
+    return undefined;
+  }
 }
 
 function published(text: string, provenance: DictationProvenance | undefined): PluginQuestionAnswerState {
@@ -58,7 +65,7 @@ export function mountAnswerEditor(container: HTMLElement, props: PluginQuestionE
   let active = props.active;
   let applying = false;
   /** Verbatim-speech provenance of the current text; cleared by any edit. */
-  let provenance: DictationProvenance | undefined;
+  let provenance: DictationProvenance | undefined = answerProvenance(props.answer);
   const publish = () => {
     if (disposed || props.signal.aborted) return;
     props.onChange(published(textarea.value, provenance));
@@ -88,7 +95,13 @@ export function mountAnswerEditor(container: HTMLElement, props: PluginQuestionE
   const appendProvenance = (before: string, incoming: DictationProvenance | undefined): DictationProvenance | undefined => {
     if (!before) return incoming;
     if (!provenance || !incoming) return undefined;
-    return { language: incoming.language, words: [...provenance.words, ...incoming.words] };
+    // Each dictation run times its words from its own start, so a later run
+    // is shifted past the words already kept to stay on one ordered timeline.
+    // The silence between runs is not measured; only each run's own leading
+    // silence shows up as a gap.
+    const offset = provenance.words.at(-1)?.end ?? 0;
+    const shifted = incoming.words.map(word => ({ ...word, start: word.start + offset, end: word.end + offset }));
+    return { language: incoming.language, words: [...provenance.words, ...shifted] };
   };
   textarea.addEventListener("input", onInput);
   if (props.signal.aborted) dispose();
@@ -101,7 +114,10 @@ export function mountAnswerEditor(container: HTMLElement, props: PluginQuestionE
     update(next) {
       if (disposed) return;
       syncActive(next.active);
-      setValue(answerText(next.answer));
+      const text = answerText(next.answer);
+      // Our own echoed state keeps its provenance; a replaced answer brings its own.
+      if (text !== textarea.value) provenance = answerProvenance(next.answer);
+      setValue(text);
     },
     focus() {
       if (!disposed && active) textarea.focus();

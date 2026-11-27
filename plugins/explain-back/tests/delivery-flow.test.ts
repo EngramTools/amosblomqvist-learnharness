@@ -16,7 +16,7 @@ import type {
 	PluginQuestionTypeDefinition,
 } from "learnharness-plugin-api";
 import { activate, type ExplainBackBackendOptions } from "../src/backend.ts";
-import { DELIVERY_CRITERION, GAP_KINDS, literalReaderInstructions, type ExplainBackPayload } from "../src/contract.ts";
+import { DELIVERY_CRITERION, GAP_KINDS, literalReaderInstructions, readProvenance, type ExplainBackPayload } from "../src/contract.ts";
 import { fixWordingInstructions } from "../src/grader.ts";
 import { mountAnswerEditor } from "../src/editor.ts";
 import { mountAnsweredCard } from "../src/result-view.ts";
@@ -412,4 +412,109 @@ test("the answered card hides the delivery section when delivery is unavailable"
 
 	assert.equal(container.querySelector(".lh-explain-back__delivery"), null);
 	controller.abort();
+});
+
+function editorProps(answer: unknown, states: { status: string; value?: { text: string; language?: string; words?: { start: number; end: number }[] } }[]) {
+	const { document } = parseHTML("<!doctype html><html><body></body></html>");
+	const container = document.createElement("div");
+	document.body.append(container);
+	const props = {
+		input: { question: "Explain the step.", type: "check", nodeId: "node-editor", payload },
+		chatId: "chat-editor",
+		questionId: "question-editor",
+		contractVersion: 1,
+		variant: "teach",
+		signal: new AbortController().signal,
+		active: true,
+		answer,
+		onChange(state: (typeof states)[number]) { states.push(state); },
+	} as unknown as PluginQuestionEditorProps<ExplainBackPayload>;
+	return { container, props };
+}
+
+test("a second dictation run lands on one ordered timeline that grades", async () => {
+	const states: Parameters<typeof editorProps>[1] = [];
+	const { container, props } = editorProps({ status: "empty" }, states);
+	const handle = mountAnswerEditor(container, props, { interviewMode: true }) as PluginQuestionEditorHandle;
+	// Each run times its words from its own start, so both runs begin near zero.
+	handle.appendDictatedSpeech!({ text: "uh an even number", language: "en", words: [{ word: "uh", start: 0.1, end: 0.3, confidence: 0.9 }, { word: "an", start: 0.4, end: 1.0, confidence: 0.97 }] });
+	handle.appendDictatedSpeech!({ text: "is 2k", language: "en", words: [{ word: "is", start: 0.2, end: 0.4, confidence: 0.97 }, { word: "2k", start: 0.5, end: 0.9, confidence: 0.95 }] });
+	const saved = states.at(-1)!;
+	assert.equal(saved.status, "ready");
+	assert.equal(saved.value!.text, "uh an even number is 2k");
+	const words = readProvenance(saved.value)!.words;
+	assert.deepEqual(words.map(word => [word.word, word.start, word.end]), [["uh", 0.1, 0.3], ["an", 0.4, 1.0], ["is", 1.2, 1.4], ["2k", 1.5, 1.9]]);
+	handle.dispose();
+
+	const f = fixture({ interviewMode: true });
+	try {
+		const result = await f.grade(gradingContext(saved.value));
+		assert.equal((result.delivery as { status: string }).status, "ok");
+		assert.equal((result.delivery as { wordsPerMin: number }).wordsPerMin, 4 / ((1.9 - 0.1) / 60));
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("a remounted or restored editor keeps the language and words of its saved dictated answer", () => {
+	const states: Parameters<typeof editorProps>[1] = [];
+	const answer = { status: "ready", value: dictatedAnswer() };
+	const { container, props } = editorProps(answer, states);
+	const handle = mountAnswerEditor(container, props, { interviewMode: true }) as PluginQuestionEditorHandle;
+	assert.deepEqual(states.at(-1), answer, "the mount republishes the saved answer unchanged");
+	// The host echoing the editor's own state back changes nothing.
+	handle.update({ answer: states.at(-1)! as never, active: true });
+	handle.appendDictatedSpeech!({ text: "so", language: "en", words: [{ word: "so", start: 0.1, end: 0.2, confidence: 0.9 }] });
+	assert.equal(states.at(-1)!.value!.words!.length, 8, "a following run extends the saved timings");
+	// A replaced answer brings its own provenance; a plain one carries none.
+	handle.update({ answer: { status: "ready", value: { text: "Plain replacement." } }, active: true });
+	handle.appendDictatedSpeech!({ text: "more", language: "en", words: [{ word: "more", start: 0.1, end: 0.2, confidence: 0.9 }] });
+	assert.equal(states.at(-1)!.value!.words, undefined, "dictation after a words-less answer has no verbatim timings");
+	handle.dispose();
+});
+
+test("an unreadable or overlapping word list leaves delivery unavailable and still grades", async () => {
+	const f = fixture({ interviewMode: true });
+	try {
+		const overlapping = { ...dictatedAnswer(), words: [{ word: "uh", start: 0.1, end: 0.5, confidence: 0.9 }, { word: "an", start: 0.3, end: 0.6, confidence: 0.97 }] };
+		const result = await f.grade(gradingContext(overlapping));
+		assert.deepEqual(result.delivery, { status: "unavailable", reason: "the dictation timings could not be read" });
+		assert.deepEqual(result.gaps, literalResult.gaps);
+	} finally {
+		f.cleanup();
+	}
+});
+
+test("the Jev request state carries only the delivery metric fields", async () => {
+	const stub = await stubJsonServer((_request, response) => sendJson(response, 200, {
+		model: "jev-1.14.0",
+		answers: {
+			...Object.fromEntries(GAP_KINDS.map(kind => [kind, { type: "noul", noul: criteria[kind] }])),
+			[DELIVERY_CRITERION]: { type: "noul", noul: criteria[DELIVERY_CRITERION] },
+			fix: { type: "choice", choice: DELIVERY_CRITERION, confidence: 0.6, probabilities: criteria },
+		},
+	}));
+	const f = fixture({ interviewMode: true, jevEndpoint: stub.url });
+	try {
+		await f.grade(gradingContext(dictatedAnswer()));
+		const body = stub.requests[0]!.body as { state: { metrics: Record<string, unknown> } };
+		assert.deepEqual(Object.keys(body.state.metrics).sort(), ["fillersPerMin", "pauses", "wordsPerMin"]);
+	} finally {
+		f.cleanup();
+		await stub.close();
+	}
+});
+
+test("a failed settings write leaves the in-memory delivery settings unchanged", () => {
+	const f = fixture();
+	try {
+		fs.rmSync(f.dataDirectory, { recursive: true, force: true });
+		fs.writeFileSync(f.dataDirectory, "not a directory");
+		assert.throws(() => f.handlers.get("set-interview-mode")!({ mode: true }));
+		assert.throws(() => f.handlers.get("set-pause-threshold")!({ seconds: 5 }));
+		assert.deepEqual(f.handlers.get("get-settings")!(undefined), { hasTypesafeKey: true, interviewMode: false, pauseThresholdSeconds: 2 });
+	} finally {
+		f.cleanup();
+		fs.rmSync(f.dataDirectory, { force: true });
+	}
 });

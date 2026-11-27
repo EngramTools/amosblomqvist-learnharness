@@ -1,4 +1,4 @@
-import { DELIVERY_CRITERION } from "./contract.ts";
+import type { DeliveryMetrics, DeliveryPause } from "./contract.ts";
 
 /** Deepgram's documented filler spellings (nova family, English only,
  *  developers.deepgram.com/docs/filler-words). Matched case-insensitively
@@ -13,25 +13,10 @@ export type DictatedWordLike = {
 	readonly end: number;
 };
 
-export type DeliveryPause = {
-	/** The word the pause follows (`words[i].word`), exactly as dictated. */
-	afterWord: string;
-	/** Gap from that word's end to the next word's start, in seconds. */
-	seconds: number;
-};
-
-export type DeliveryMetrics = {
-	/** Filler words per minute of speaking time. */
-	fillersPerMin: number;
-	/** All dictated words per minute of speaking time. */
-	wordsPerMin: number;
-	/** Every gap at or above the pause threshold, in word order. */
-	pauses: DeliveryPause[];
-};
-
 /** Rate = count / (last word end − first word start) in minutes. A single
- *  word has no measurable speaking time, so the rates are 0 rather than
- *  infinite (same for an empty or non-finite-span input). */
+ *  word measures its own span (start to end); an empty input, or a span that
+ *  is zero, negative or non-finite, has no measurable speaking time, so the
+ *  rates are 0 rather than infinite. */
 export function computeDeliveryMetrics(words: readonly DictatedWordLike[], pauseThresholdSeconds: number): DeliveryMetrics {
 	if (words.length === 0) return { fillersPerMin: 0, wordsPerMin: 0, pauses: [] };
 	const first = words[0]!;

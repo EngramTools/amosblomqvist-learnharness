@@ -28,6 +28,8 @@ type SettingsForm = {
   interviewToggle: HTMLInputElement;
   thresholdInput: HTMLInputElement;
   save: HTMLButtonElement;
+  /** The last settings the backend confirmed, if any were read yet. */
+  current: () => PublicSettings | undefined;
   apply: (settings: PublicSettings) => void;
   setStatus: (message: string, error?: boolean) => void;
   setBusy: (busy: boolean) => void;
@@ -102,7 +104,7 @@ function createSettingsForm(document: Document): SettingsForm {
   const save = document.createElement("button");
   save.type = "submit";
   save.className = "lh-explain-back-settings__save";
-  save.textContent = "Save key";
+  save.textContent = "Save settings";
   actions.append(save);
 
   const status = document.createElement("p");
@@ -110,15 +112,17 @@ function createSettingsForm(document: Document): SettingsForm {
   status.setAttribute("role", "status");
   form.append(field, note, interview.field, threshold.field, actions, status);
 
+  let current: PublicSettings | undefined;
   return {
     form,
     input,
     interviewToggle: interview.input,
     thresholdInput: threshold.input,
     save,
+    current: () => current,
     apply(settings) {
+      current = settings;
       input.placeholder = settings.hasTypesafeKey ? "Saved key — enter a new key to replace it" : "Paste a TypeSafe API key";
-      save.textContent = settings.hasTypesafeKey ? "Replace key" : "Save key";
       interview.input.checked = settings.interviewMode;
       threshold.input.value = String(settings.pauseThresholdSeconds);
     },
@@ -136,43 +140,65 @@ function createSettingsForm(document: Document): SettingsForm {
 type SaveKeyRequest = {
   ctx: SettingsContext;
   signal: AbortSignal;
+  /** Empty when only the delivery rows are being saved. */
   key: string;
   form: SettingsForm;
 };
 
-async function saveTypesafeKey(request: SaveKeyRequest): Promise<void> {
-  request.form.setBusy(true);
+const KEY_SAVED_MESSAGE = "Saved. Learner text is sent to TypeSafe for scoring.";
+
+/** Save the key (when one was entered) and then the delivery rows, so the
+ *  interview toggle and pause threshold persist without re-pasting a key. */
+async function saveSettings(request: SaveKeyRequest): Promise<void> {
+  const { form, signal, key } = request;
+  form.setBusy(true);
   try {
-    const settings = readPublicSettings(await request.ctx.call("set-typesafe-key", { key: request.key }));
-    if (request.signal.aborted) return;
-    const saved = await saveDeliverySettings(request, settings);
-    if (request.signal.aborted) return;
-    request.form.input.value = "";
-    request.form.apply(saved);
-    request.form.setStatus("Saved. Learner text is sent to TypeSafe for scoring.");
+    const keyed = key ? readPublicSettings(await request.ctx.call("set-typesafe-key", { key })) : form.current();
+    if (signal.aborted) return;
+    const delivery = await saveDeliverySettings(request, keyed);
+    if (signal.aborted) return;
+    if (key) form.input.value = "";
+    if (delivery.settings) form.apply(delivery.settings);
+    reportSaved(form, key !== "", delivery.error);
   } catch (error) {
-    if (request.signal.aborted) return;
-    const message = error instanceof Error ? error.message : "The key could not be saved.";
-    request.form.setStatus(message.includes(request.key) ? "The key could not be saved." : message, true);
+    if (signal.aborted) return;
+    form.setStatus(failureMessage(error, key), true);
   } finally {
-    request.form.setBusy(false);
+    form.setBusy(false);
   }
 }
 
-/** Push the interview toggle and pause threshold; falls back to the last
- *  confirmed settings when their save fails, so the rows stay truthful. */
-async function saveDeliverySettings(request: SaveKeyRequest, fallback: PublicSettings): Promise<PublicSettings> {
+function reportSaved(form: SettingsForm, keySaved: boolean, deliveryError: string | undefined): void {
+  const saved = keySaved ? KEY_SAVED_MESSAGE : "Saved.";
+  const failed = keySaved ? `The key is saved, but ${deliveryError}` : deliveryError;
+  form.setStatus(deliveryError === undefined ? saved : failed!, deliveryError !== undefined);
+}
+
+/** Never echo the key, including from validation and transport failures. */
+function failureMessage(error: unknown, key: string): string {
+  const message = error instanceof Error ? error.message : "The key could not be saved.";
+  return key && message.includes(key) ? "The key could not be saved." : message;
+}
+
+function readThresholdInput(text: string): number {
+  const seconds = text.trim() === "" ? Number.NaN : Number(text);
+  if (!Number.isFinite(seconds)) throw new Error("The pause threshold must be a number of seconds.");
+  return seconds;
+}
+
+/** Push the interview toggle and pause threshold. On failure the rows fall
+ *  back to the last confirmed settings (or stay as typed when none were read),
+ *  so they never show a value the backend does not hold. */
+async function saveDeliverySettings(request: SaveKeyRequest, fallback: PublicSettings | undefined): Promise<{ settings?: PublicSettings; error?: string }> {
+  let confirmed = fallback;
   try {
-    const interview = readPublicSettings(await request.ctx.call("set-interview-mode", { mode: request.form.interviewToggle.checked }));
-    if (request.signal.aborted) return fallback;
-    const thresholdValue = Number(request.form.thresholdInput.value);
-    if (!Number.isFinite(thresholdValue)) throw new Error("The pause threshold must be a number of seconds.");
-    return readPublicSettings(await request.ctx.call("set-pause-threshold", { seconds: thresholdValue }));
+    const thresholdValue = readThresholdInput(request.form.thresholdInput.value);
+    confirmed = readPublicSettings(await request.ctx.call("set-interview-mode", { mode: request.form.interviewToggle.checked }));
+    if (request.signal.aborted) return { settings: confirmed };
+    confirmed = readPublicSettings(await request.ctx.call("set-pause-threshold", { seconds: thresholdValue }));
+    return { settings: confirmed };
   } catch (error) {
-    if (request.signal.aborted) return fallback;
-    // The key is saved; only the delivery rows failed. Surface their error.
-    request.form.setStatus(error instanceof Error ? error.message : "The delivery settings could not be saved.", true);
-    return fallback;
+    return { settings: confirmed, error: error instanceof Error ? error.message : "The delivery settings could not be saved." };
   }
 }
 
@@ -200,13 +226,8 @@ export function mountTypesafeSettings(container: HTMLElement, ctx: SettingsConte
   const submit = async () => {
     if (busy || !isLive()) return;
     const key = form.input.value.trim();
-    if (!key) {
-      form.setStatus("Enter a TypeSafe API key.", true);
-      form.input.focus();
-      return;
-    }
     busy = true;
-    try { await saveTypesafeKey({ ctx, signal, key, form }); }
+    try { await saveSettings({ ctx, signal, key, form }); }
     finally { busy = false; }
   };
   const onSubmit = (event: Event) => {

@@ -1,5 +1,4 @@
-import { DELIVERY_CRITERION, GAP_KINDS, type ExplainBackGap, type GapKind } from "./contract.ts";
-import type { DeliveryMetrics } from "./delivery.ts";
+import { DELIVERY_CRITERION, GAP_KINDS, type DeliveryMetrics, type ExplainBackGap, type GapKind } from "./contract.ts";
 
 export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 export const JEV_MODEL = "jev-latest";

@@ -14,12 +14,13 @@ import {
   readPayload,
   readProvenance,
   RESULT_VERSION,
+  type DeliveryMetrics,
   type ExplainBackDelivery,
   type ExplainBackPayload,
   type ExplainBackResult,
   type ExplainBackScoring,
 } from "./contract.ts";
-import { computeDeliveryMetrics, isEnglishDictationLanguage, type DeliveryMetrics } from "./delivery.ts";
+import { computeDeliveryMetrics, isEnglishDictationLanguage } from "./delivery.ts";
 import { JevUnavailableError, scoreExplainBack, type JevOptions, type JevScores } from "./jev.ts";
 
 type LiteralReaderContext = Pick<PluginBackendContext, "inference" | "learning">;
@@ -199,7 +200,7 @@ export async function gradeExplainBack<Q, A>(
   if (!replyText) throw new Error("The literal reader returned no text.");
   const result = readExplainBackResult(parseLiteralReaderReply(replyText));
   if (!result) throw new Error(`The literal reader returned an invalid result. Expected version ${RESULT_VERSION} with a reconstruction and gaps of a known kind.`);
-  const input = { payload, explanation: answer.text, result, metrics: delivery.status === "ok" ? delivery : undefined };
+  const input = { payload, explanation: answer.text, result, metrics: delivery.status === "ok" ? deliveryMetrics(delivery) : undefined };
   const scoring = await scoreLiteracy({ context, model, signal: grading.signal, input, options });
   return { ...result, scoring, delivery };
 }
@@ -214,11 +215,22 @@ export function computeDelivery(
   options: { interviewMode: boolean; pauseThresholdSeconds: number },
 ): ExplainBackDelivery {
   if (!options.interviewMode) return { status: "unavailable", reason: "Interview mode is off." };
-  const provenance = readProvenance(answer.language === undefined && answer.words === undefined ? undefined : answer);
+  let provenance: ReturnType<typeof readProvenance>;
+  try {
+    provenance = readProvenance(answer.language === undefined && answer.words === undefined ? undefined : answer);
+  } catch {
+    // Delivery is optional feedback: unreadable timings never abort grading.
+    return { status: "unavailable", reason: "the dictation timings could not be read" };
+  }
   if (!provenance) return { status: "unavailable", reason: "typed answer" };
   if (!isEnglishDictationLanguage(provenance.language)) return { status: "unavailable", reason: "not available for this language" };
   const metrics = computeDeliveryMetrics(provenance.words, options.pauseThresholdSeconds);
   return { status: "ok", ...metrics };
+}
+
+/** Only the metric fields reach Jev; `status` is a result-shape detail. */
+function deliveryMetrics({ fillersPerMin, wordsPerMin, pauses }: Extract<ExplainBackDelivery, { status: "ok" }>): DeliveryMetrics {
+  return { fillersPerMin, wordsPerMin, pauses };
 }
 
 /** Jev failure never discards the literal-reader feedback; it only hides scoring. */

@@ -46,7 +46,8 @@ export type ExplainBackResult = {
   gaps: ExplainBackGap[];
   /** Absent only on results saved before scoring was added. */
   scoring?: ExplainBackScoring;
-  /** Absent on typed answers and results saved before interview mode existed. */
+  /** Absent only on results saved before interview mode existed; every newer
+   *  result carries it, as `unavailable` with a reason when metrics do not apply. */
   delivery?: ExplainBackDelivery;
 };
 

@@ -104,8 +104,8 @@ export function activate(ctx: PluginBackendContext, options: ExplainBackBackendO
   const setInterviewMode = ctx.handle("set-interview-mode", input => {
     assertActive();
     if (!isModeInput(input)) throw new Error("Interview mode must be a boolean.");
+    saveSettings(ctx.dataDirectory, { ...settings, interviewMode: input.mode });
     settings.interviewMode = input.mode;
-    saveSettings(ctx.dataDirectory, settings);
     const published = publicSettings(settings);
     ctx.events.emit("settings-changed", published);
     return published;
@@ -113,8 +113,9 @@ export function activate(ctx: PluginBackendContext, options: ExplainBackBackendO
   const setPauseThreshold = ctx.handle("set-pause-threshold", input => {
     assertActive();
     if (!isThresholdInput(input)) throw new Error("Expected a pause threshold value.");
-    settings.pauseThresholdSeconds = readPauseThreshold(input.seconds);
-    saveSettings(ctx.dataDirectory, settings);
+    const seconds = readPauseThreshold(input.seconds);
+    saveSettings(ctx.dataDirectory, { ...settings, pauseThresholdSeconds: seconds });
+    settings.pauseThresholdSeconds = seconds;
     const published = publicSettings(settings);
     ctx.events.emit("settings-changed", published);
     return published;
