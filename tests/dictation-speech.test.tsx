@@ -12,7 +12,7 @@ import { parseHTML } from "linkedom";
 import { createRoot } from "react-dom/client";
 import { useDictationLanguage } from "../components/dictation-preference.ts";
 import { PluginQuestionDockContent } from "../components/plugin-question-dock.tsx";
-import { useDictation, type Dictation, type DictationDelivery } from "../components/dictation.tsx";
+import { useDictation, type Dictation } from "../components/dictation.tsx";
 import { type DictatedSpeech } from "../src/core/dictation.ts";
 import type { PluginQuestionEditorHandle, PluginQuestionEditorProps, PluginQuestionRenderer, PluginQuestionSnapshot } from "../src/core/plugin-questions.ts";
 import type { QuestionRendererRegistration } from "../components/plugin-manager.ts";
@@ -78,6 +78,9 @@ const RECORDED_RESULTS: unknown[] = [
 
 const saved: PluginQuestionSnapshot = { protocolVersion: 1, pluginId: "fixture", typeId: "code", label: "Code", variant: "probe", questionId: "q1", contractVersion: 1, occurrence: { messageId: "a", contentIndex: 0, toolCallId: "call", toolName: "code" }, input: { question: "Public question", payload: { reference: "PRIVATE_REFERENCE" } }, questionSchema: { type: "object" }, answerSchema: { type: "string" }, showThinking: false, requiresAnswerRefinement: false };
 
+/** What the editor handle received: text from appendTranscript, an envelope from appendDictatedSpeech. */
+type DictationDelivery = string | DictatedSpeech;
+
 /** What fixture() hands back to its tests. */
 interface SpeechFixture {
 	state: { snapshot: PluginQuestionSnapshot; expanded: boolean; reveal: boolean; ready: boolean; reconciliation: "ready"; available: boolean; speech: DictationDelivery[]; fallback: string[] };
@@ -88,7 +91,7 @@ interface SpeechFixture {
 	socket(): RecordingSocket;
 }
 
-async function fixture(options: { thinking?: boolean; wantsWords?: boolean; language?: string } = {}): Promise<SpeechFixture> {
+async function fixture(options: { thinking?: boolean; wantsWords?: boolean; omitSpeechCallback?: boolean; omitFlag?: boolean; language?: string } = {}): Promise<SpeechFixture> {
 	const dom = parseHTML("<html><body><div id='root'></div></body></html>");
 	let active: Element = dom.document.body;
 	Object.defineProperty(dom.document, "activeElement", { get: () => active });
@@ -113,8 +116,9 @@ async function fixture(options: { thinking?: boolean; wantsWords?: boolean; lang
 		const textarea = container.ownerDocument.createElement("textarea"); container.append(textarea);
 		props.onChange({ status: "ready", value: "  code\n" });
 		const handle: PluginQuestionEditorHandle = { update() {}, focus() { textarea.focus(); }, dispose() {},
-			appendTranscript(text: string) { state.speech.push(text); },
-			...(options.wantsWords ? { wantsDictatedWords: true } : {}) };
+			appendTranscript(text: string) { assert.equal(typeof text, "string", "appendTranscript is text-only"); state.speech.push(text); },
+			...(options.wantsWords && !options.omitFlag ? { wantsDictatedWords: true } : {}),
+			...(options.wantsWords && !options.omitSpeechCallback ? { appendDictatedSpeech(speech: DictatedSpeech) { state.speech.push(speech); } } : {}) };
 		return handle;
 	} } };
 	let dictation!: Dictation;
@@ -198,4 +202,18 @@ test("host thinking receives text only even when an editor opts in", async () =>
 	assert.equal(f.draft.thinking, "uh let me think the premise fails", "thinking draft receives plain text");
 	assert.deepEqual(f.state.fallback, []);
 	assert.equal(new URL(openedUrls[0]!).searchParams.has("filler_words"), false, "thinking never requests fillers");
+});
+
+test("an editor that sets wantsDictatedWords without appendDictatedSpeech keeps plain text and no filler_words", async () => {
+	const f = await fixture({ wantsWords: true, omitSpeechCallback: true });
+	await dictate(f);
+	assert.deepEqual(f.state.speech, ["uh let me think the premise fails"]);
+	assert.equal(openedUrls[0]!.includes("filler_words"), false);
+});
+
+test("an editor that implements appendDictatedSpeech without the flag keeps plain text", async () => {
+	const f = await fixture({ wantsWords: true, omitFlag: true });
+	await dictate(f);
+	assert.deepEqual(f.state.speech, ["uh let me think the premise fails"]);
+	assert.equal(openedUrls[0]!.includes("filler_words"), false);
 });

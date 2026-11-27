@@ -155,7 +155,9 @@ an `AbortSignal`. `mountSubmissionEditor` also receives `active`, controlled `su
 and `onChange`. State is `{status:"empty"}` or `{status:"unready"|"ready",value:JsonValue}`.
 A ready editor value is mandatory even when an interceptor has pending external input.
 The required handle has `update`, `focus`, `dispose`; optional `handleKeyDown` and
-`appendTranscript` use the same editor-handle vocabulary as teaching questions.
+`appendTranscript` use the same editor-handle vocabulary as teaching questions. The
+dictated-words opt-in (`wantsDictatedWords`, `appendDictatedSpeech`) is teaching-question only;
+problem editors always receive plain transcript text.
 
 The native practice dock retains its statement, then inserts the plugin editor above
 **Your thinking**, with one **Submit** button. After acceptance the editor value stays

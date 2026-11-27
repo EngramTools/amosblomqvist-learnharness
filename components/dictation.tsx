@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
-import { deepgramListenUrl, isEnglishDictationLanguage, type DictatedSpeech, type DictatedWord, type DictationLanguage } from "@/src/core";
+import { deepgramListenUrl, type DictatedSpeech, type DictatedWord, type DictationLanguage } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 import { dispatchFocusedPluginShortcut } from "@/components/plugin-input-focus";
@@ -233,9 +233,9 @@ export function rmsToMeter(rms: number): number {
  * window, one pending question, one target at a time.
  */
 let questionTarget: ((text: string) => void | Promise<void>) | null = null;
-/** Whether the current question target opted into per-word timings
- *  (PluginQuestionEditorHandle.wantsDictatedWords). Text-only otherwise. */
-let questionTargetWantsWords = false;
+/** The current question target's `{text, words}` receiver, set only when its
+ *  editor opted into per-word timings. Null means text-only. */
+let questionTargetSpeech: ((speech: DictatedSpeech) => void | Promise<void>) | null = null;
 let composerTarget: ((text: string) => void) | null = null;
 
 /** File references use the very same default destination as dictation,
@@ -268,39 +268,47 @@ export function joinDictation(current: string, final: string): string {
  * unmount guard is identity-based so dev-mode double-invoked effects
  * can't clear another claimant.
  */
-export function usePluginQuestionDictationTarget(append: (text: string) => void | Promise<void>, claimed: boolean, wantsWords = false) {
+export function usePluginQuestionDictationTarget(append: (text: string) => void | Promise<void>, claimed: boolean, appendSpeech?: (speech: DictatedSpeech) => void | Promise<void>) {
 	useEffect(() => {
 		if (!claimed) return;
 		questionTarget = append;
-		questionTargetWantsWords = wantsWords;
+		questionTargetSpeech = appendSpeech ?? null;
 		return () => {
 			if (questionTarget === append) {
 				// Cancel/discard an obsolete capture before releasing its destination.
 				if (recordingTarget === append) cancelGlobalDictation();
 				questionTarget = null;
-				questionTargetWantsWords = false;
+				questionTargetSpeech = null;
 			}
 		};
-	}, [append, claimed, wantsWords]);
+	}, [append, claimed, appendSpeech]);
 }
 
 export function useDictationTarget(append: (text: string) => void, claimed: boolean) {
 	useEffect(() => {
 		if (!claimed) return;
 		questionTarget = append;
+		questionTargetSpeech = null;
 		return () => {
-			if (questionTarget === append) questionTarget = null;
+			if (questionTarget === append) { questionTarget = null; questionTargetSpeech = null; }
 		};
 	}, [append, claimed]);
 }
 
+/** A final's Deepgram words when the run opted in to word timings; nothing otherwise. */
+function finalWords(optedIn: unknown, alternative: { words?: DictatedWord[] } | undefined): DictatedWord[] {
+	return optedIn ? alternative?.words ?? [] : [];
+}
+
 export type DictationPhase = "idle" | "connecting" | "recording" | "stopping";
 
-export interface DictationDestination { id: string; append: (text: string) => void | Promise<void> }
-
-/** One flushed final for a target: plain text, or text plus per-word timings
- *  when that target opted in. */
-export type DictationDelivery = string | DictatedSpeech;
+export interface DictationDestination {
+	id: string;
+	append: (text: string) => void | Promise<void>;
+	/** Opt-in: when present the run delivers `{text, words}` here instead of
+	 *  text to `append`, and requests filler words for English. */
+	appendSpeech?: (speech: DictatedSpeech) => void | Promise<void>;
+}
 
 export type Dictation = {
 	phase: DictationPhase;
@@ -398,12 +406,13 @@ export function useDictation({ append, destination = "primary", disabled = false
 	/** The deferred transcript (owner round 2): finals land here during the
 	 *  run and flush into the primary input once, at teardown. */
 	const bufferRef = useRef<string[]>([]);
-	/** Per-final word timings, index-aligned with bufferRef (opt-in delivery).
-	 *  Non-opted runs leave it empty — no extra retention on the default path. */
-	const wordsRef = useRef<DictatedWord[][]>([]);
-	/** The live run's opt-in, fixed at start; the URL and delivery shape key
-	 *  off it. Off by default — every unchanged target keeps text-only. */
-	const dictatedWordsRef = useRef(false);
+	/** Word timings of every final, in final order (opt-in delivery). Only
+	 *  opted-in runs fill it — no extra retention on the default path. */
+	const wordsRef = useRef<DictatedWord[]>([]);
+	/** The live run's `{text, words}` receiver, fixed at start; the URL and
+	 *  delivery shape key off it. Undefined by default — every unchanged
+	 *  target keeps text-only. */
+	const speechRef = useRef<DictationDestination["appendSpeech"]>(undefined);
 	/** Resolvers waiting for the run to fully end (finish(), owner
 	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
 	const waitersRef = useRef<Array<{ resolve: () => void; reject: (error: unknown) => void }>>([]);
@@ -417,14 +426,9 @@ export function useDictation({ append, destination = "primary", disabled = false
 		const text = bufferRef.current.join(" ");
 		bufferRef.current = [];
 		const destination = destinationRef.current ?? { id: "main", append: appendRef.current };
-		const append = destination.append as (delivery: DictationDelivery) => unknown;
-		if (dictatedWordsRef.current) {
-			const words = wordsRef.current.flat();
-			wordsRef.current = [];
-			return append({ text, words });
-		}
+		const words = wordsRef.current;
 		wordsRef.current = [];
-		return append(text);
+		return speechRef.current ? speechRef.current({ text, words }) : destination.append(text);
 	}, []);
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
@@ -494,8 +498,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 			// Minted JWTs authenticate via the "bearer" subprotocol — ["token",
 			// jwt] is rejected at the handshake (verified live; "token" is for
 			// raw API keys only, as in the owner's pi dictate extension).
-			const fillerWords = dictatedWordsRef.current && isEnglishDictationLanguage(language);
-			const ws = new WebSocket(deepgramListenUrl(language, { fillerWords }), ["bearer", token]);
+			// deepgramListenUrl keeps filler_words English-only.
+			const ws = new WebSocket(deepgramListenUrl(language, { fillerWords: !!speechRef.current }), ["bearer", token]);
 			wsRef.current = ws;
 
 			ws.addEventListener("open", () => {
@@ -523,9 +527,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 					// teardown — the meter is the only live feedback.
 					if (msg.is_final && text) {
 						bufferRef.current.push(text);
-						// Keep the final's words in final order for opted-in runs;
-						// index-aligned with the transcript buffer.
-						wordsRef.current.push((alternative?.words ?? []) as DictatedWord[]);
+						wordsRef.current.push(...finalWords(speechRef.current, alternative));
 					}
 				}
 			});
@@ -569,12 +571,10 @@ export function useDictation({ append, destination = "primary", disabled = false
 		const target = destination ?? { id: "main", append: primary ? questionTarget ?? appendRef.current : (text: string) => appendRef.current(text) };
 		destinationRef.current = target;
 		// Opt-in is read once per run: an explicit destination carries its own
-		// flag; the default question target carries the plugin editor's
-		// wantsDictatedWords. The core owns the language gate: filler_words is
-		// requested for English only, and word timings are kept for any language.
-		dictatedWordsRef.current = destination
-			? !!(destination as DictationDestination & { wantsDictatedWords?: boolean }).wantsDictatedWords
-			: primary && questionTargetWantsWords;
+		// receiver; the default question target carries the plugin editor's.
+		// The core owns the language gate: filler_words is requested for English
+		// only, and word timings are kept for any language.
+		speechRef.current = destination ? destination.appendSpeech : primary ? questionTargetSpeech ?? undefined : undefined;
 		setDestinationId(target.id);
 		recordingOwner = owner;
 		recordingTarget = target.append;

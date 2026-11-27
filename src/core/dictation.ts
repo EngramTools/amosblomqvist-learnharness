@@ -97,8 +97,9 @@ export interface DictatedSpeech {
 }
 
 export interface DeepgramListenOptions {
-	/** Deepgram keeps recognized fillers (uh, um, …) as normal words — nova
-	 *  family, English only. Never request for other languages. */
+	/** Ask Deepgram to keep filler words (disfluencies such as uh, um, mhmm)
+	 *  as normal words instead of dropping them — nova family, English only.
+	 *  Never requested for other languages. */
 	readonly fillerWords?: boolean;
 }
 

@@ -2,14 +2,21 @@ import {
 	clonePluginQuestionJson, freezePluginQuestionValue,
 	type PluginQuestionAnswerState, type PluginQuestionEditorHandle,
 	type PluginQuestionEditorKey, type PluginQuestionEditorProps,
-	type PluginProblemEditorHandle, type PluginProblemEditorProps,
+	type PluginProblemEditorHandle, type PluginProblemEditorProps, type DictatedSpeech,
 } from "../src/core/index.ts";
 
 export function controlledPluginAnswer(value: PluginQuestionAnswerState): PluginQuestionAnswerState {
 	if (!value || !["empty", "ready", "unready"].includes(value.status)) throw new Error("Invalid answer state");
 	return value.status === "empty" ? Object.freeze({ status: "empty" }) : freezePluginQuestionValue({ status: value.status, value: clonePluginQuestionJson(value.value) });
 }
-type EditorHandle = Pick<PluginQuestionEditorHandle, "focus" | "dispose" | "handleKeyDown" | "appendTranscript"> & { update: unknown; wantsDictatedWords?: boolean };
+type EditorHandle = Pick<PluginQuestionEditorHandle, "focus" | "dispose" | "handleKeyDown" | "appendTranscript"> & { update: unknown; wantsDictatedWords?: boolean; appendDictatedSpeech?: PluginQuestionEditorHandle["appendDictatedSpeech"] };
+const optionalFunction = (value: unknown) => value === undefined || typeof value === "function";
+function isEditorHandle(next: EditorHandle | null | undefined): boolean {
+	return !!next && typeof next.update === "function" && typeof next.focus === "function" && typeof next.dispose === "function"
+		&& optionalFunction(next.handleKeyDown) && optionalFunction(next.appendTranscript) && optionalFunction(next.appendDictatedSpeech);
+}
+/** Opted in to `{text, words}` delivery: the flag AND the callback. */
+const wantsSpeech = (handle: EditorHandle | null) => handle?.wantsDictatedWords === true && typeof handle.appendDictatedSpeech === "function";
 /** Both question and practice editors use one generation/cleanup authority. */
 function createEditorLease<P, H extends EditorHandle>(options: {
 	props(signal: AbortSignal, onChange: (state: PluginQuestionAnswerState) => void): P;
@@ -39,18 +46,19 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		props,
 		adopt(next: H) {
 			if (!current) { try { next.dispose(); } catch {} return; }
-			if (!next || typeof next.update !== "function" || typeof next.focus !== "function" || typeof next.dispose !== "function" || (next.handleKeyDown !== undefined && typeof next.handleKeyDown !== "function") || (next.appendTranscript !== undefined && typeof next.appendTranscript !== "function")) { try { if (typeof next?.dispose === "function") next.dispose(); } catch {} fail(); return; }
+			if (!isEditorHandle(next)) { try { if (typeof next?.dispose === "function") next.dispose(); } catch {} fail(); return; }
 			handle = next; options.changed();
 		},
 		get ready() { return current && handle !== null && publishedReady; },
 		get mounted() { return current && handle !== null; },
-		get speech() { return current && !!handle?.appendTranscript; },
-		/** Opt-in state of the adopted handle (default false). */
-		get wantsWords() { return current && !!handle?.wantsDictatedWords; },
+		get speech() { return current && (!!handle?.appendTranscript || wantsSpeech(handle)); },
+		/** Opted in to `{text, words}` delivery (default false). */
+		get wantsWords() { return current && wantsSpeech(handle); },
 		update(state: PluginQuestionAnswerState, active: boolean) { if (current && handle) try { options.update(handle, state, active); } catch { fail(); } },
 		focus() { if (current && handle) try { handle.focus(); } catch { fail(); } },
 		key(key: PluginQuestionEditorKey): "handled" | "pass" { if (current && handle?.handleKeyDown) try { return handle.handleKeyDown(key) === "handled" ? "handled" : "pass"; } catch { fail(); } return "pass"; },
 		async append(text: string) { if (current && handle?.appendTranscript) { const adopted = handle; try { await adopted.appendTranscript!(text); } catch { fail(); } } },
+		async appendSpeech(speech: DictatedSpeech) { if (current && wantsSpeech(handle)) { const adopted = handle!; try { await adopted.appendDictatedSpeech!(speech); } catch { fail(); } } },
 		fail, dispose,
 	};
 }
