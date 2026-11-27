@@ -730,6 +730,26 @@ test("a tool call from an abandoned attempt is never admitted; the retried call 
 	await assertCleanedUp(getOnlyCall(calls));
 });
 
+test("an MCP call from an abandoned attempt is discarded; the retried call is admitted", async (t) => {
+	const stale: ToolUse = { id: "toolu_abandoned", name: "read", arguments: { path: "stale" } };
+	const retried: ToolUse = { id: "toolu_retried", name: "read", arguments: { path: "a" } };
+	const staleBlocks = toToolUseMessage([stale]).slice(1, -2);
+	const { runClaude, calls } = createFakeRun(t, [
+		...abandonedAttempt([...staleBlocks, OPEN_THINKING.replace('"index":0', '"index":1')], 1),
+		callTool(stale),
+		...toToolUseMessage([retried]),
+		callTool(retried),
+		REPLY,
+	]);
+	const streamFunction = createClaudeCodeStreamFunction(runClaude);
+
+	const toolMessage = await runTurn(streamFunction, [HI]);
+	assert.deepEqual(toolMessage.content, [{ type: "toolCall", id: retried.id, name: "read", arguments: { path: "a" } }]);
+	const reply = await runTurn(streamFunction, [HI, toolMessage, toToolResult(retried, "contents of a")]);
+	assert.match(getText(reply), /contents of a/);
+	await assertCleanedUp(getOnlyCall(calls));
+});
+
 test("a non-streamed fallback answer after an abandoned attempt fails the turn instead of hanging", async (t) => {
 	const { events, calls } = await runScenario(t, [
 		...abandonedAttempt([OPEN_THINKING], 0),
