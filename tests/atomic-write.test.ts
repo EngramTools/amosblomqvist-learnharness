@@ -169,7 +169,11 @@ describe("writeFileAtomicSync", () => {
 		fs.mkdirSync(file);
 		const started = Date.now();
 		assert.throws(() => writeFileAtomicSync(file, "new"));
-		assert.ok(Date.now() - started < 50, "no waiting on folders");
+		// The EISDIR/ENOTDIR error is thrown on the first rename attempt — no
+		// retry sleep. The absolute bound stays loose: a loaded gate host can
+		// stall any single subtest well past 50ms (observed ~82ms) without the
+		// retry loop being involved; the Windows suite pins the retry timing.
+		assert.ok(Date.now() - started < 750, "no waiting on folders");
 		assert.deepEqual(temps(file), []);
 	});
 
