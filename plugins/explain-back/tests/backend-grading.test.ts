@@ -15,7 +15,9 @@ import type {
 } from "learnharness-plugin-api";
 import { activate } from "../src/backend.ts";
 import type { ExplainBackAnswer, ExplainBackPayload, ExplainBackResult } from "../src/contract.ts";
-import { literalReaderInstructions } from "../src/contract.ts";
+import { GAP_KINDS, literalReaderInstructions } from "../src/contract.ts";
+import { fixWordingInstructions, type JevRuntime } from "../src/grader.ts";
+import { sendJson, stubJsonServer } from "./support/http-stub.ts";
 
 type Grade = (context: PluginQuestionGradingContext<ExplainBackPayload, ExplainBackAnswer>) => Promise<ExplainBackResult>;
 
@@ -58,6 +60,42 @@ const noKeyScoring = {
   status: "unavailable" as const,
   reason: "No TypeSafe API key is configured, so criterion scoring is unavailable.",
 };
+
+const claudeSession = { settings: { model: { provider: "claude-code", id: "opus" }, thinkingLevel: "high" } } as unknown as ChatRecord;
+
+function claudeCatalog(cheap: ModelCatalogResponse["slots"]["cheap"]): ModelCatalogResponse {
+  return {
+    defaults: { model: { provider: "claude-code", id: "opus" }, thinkingLevel: "high" },
+    models: [
+      { id: "opus", provider: "claude-code" },
+      { id: "sonnet", provider: "claude-code" },
+    ],
+    rolePins: {},
+    slots: { cheap },
+    providers: [],
+  } as unknown as ModelCatalogResponse;
+}
+
+/** A Jev reply that picks the missing-step criterion, so scoring reaches the fix-wording call. */
+const jevReply = {
+  model: "jev-1.14.0",
+  answers: {
+    ...Object.fromEntries(GAP_KINDS.map(kind => [kind, { type: "noul", noul: 0.4 }])),
+    fix: { type: "choice", choice: "missing step", confidence: 0.64, probabilities: { "missing step": 0.82 } },
+  },
+};
+
+/** Answer both grading prompts so the literal reader and the fix wording each complete. */
+async function answerBothPrompts(request: PluginInferenceRequest): Promise<AssistantMessage> {
+  const text = request.context.systemPrompt === fixWordingInstructions ? "Next time, state that squaring 2k gives 4k²." : JSON.stringify(gradedPayload);
+  return reply(text);
+}
+
+async function failFixWording(request: PluginInferenceRequest): Promise<AssistantMessage> {
+  if (request.context.systemPrompt === fixWordingInstructions) throw new Error("The provider refused the fix wording.");
+  return reply(JSON.stringify(gradedPayload));
+}
+
 const temporaryDirectories: string[] = [];
 
 after(() => {
@@ -80,16 +118,22 @@ function fixture(options: {
   session?: ChatRecord | null;
   catalog?: ModelCatalogResponse;
   complete?: (request: PluginInferenceRequest) => Promise<AssistantMessage>;
+  typesafeKey?: string;
+  jev?: JevRuntime;
 } = {}) {
   let definition: PluginQuestionTypeDefinition | undefined;
   const requests: PluginInferenceRequest[] = [];
+  const handlers = new Map<string, (input: unknown) => unknown>();
   const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "explain-back-"));
   temporaryDirectories.push(dataDirectory);
   const cleanup = activate({
     dataDirectory,
     signal: new AbortController().signal,
     events: { emit() {} },
-    handle() { return () => {}; },
+    handle(name: string, handler: (input: unknown) => unknown) {
+      handlers.set(name, handler);
+      return () => handlers.delete(name);
+    },
     inference: {
       catalog: async () => options.catalog ?? catalog(),
       complete: async (request: PluginInferenceRequest) => {
@@ -102,8 +146,9 @@ function fixture(options: {
       definition = value;
       return () => {};
     },
-  } as unknown as PluginBackendContext);
+  } as unknown as PluginBackendContext, { jev: options.jev });
   assert.ok(definition?.gradeAnswer, "activation registers a grader");
+  if (options.typesafeKey) handlers.get("set-typesafe-key")!({ key: options.typesafeKey });
   return { grade: definition.gradeAnswer as unknown as Grade, requests, cleanup };
 }
 
@@ -186,4 +231,89 @@ test("an unconfigured model and an aborted submission reject before inference", 
   const aborted = fixture();
   await assert.rejects(aborted.grade(gradingContext(controller.signal)), { name: "AbortError" });
   assert.equal(aborted.requests.length, 0);
+});
+
+test("both grading calls run on the cheap-slot model when one is configured", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "sonnet" }, thinkingLevel: "low" }),
+    complete: answerBothPrompts,
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+  });
+  try {
+    const result = await f.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected criterion scoring to succeed");
+    assert.equal(f.requests.length, 2);
+    for (const request of f.requests) {
+      assert.deepEqual(request.model, { provider: "claude-code", id: "sonnet", thinkingLevel: "low" });
+    }
+  } finally {
+    f.cleanup();
+    await stub.close();
+  }
+});
+
+test("with no cheap slot both grading calls keep the session model", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog(null),
+    complete: answerBothPrompts,
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+  });
+  try {
+    const result = await f.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected criterion scoring to succeed");
+    assert.equal(f.requests.length, 2);
+    for (const request of f.requests) {
+      assert.deepEqual(request.model, { provider: "claude-code", id: "opus", thinkingLevel: "high" });
+    }
+  } finally {
+    f.cleanup();
+    await stub.close();
+  }
+});
+
+test("a cheap slot whose model is missing from the catalog falls back to the session model", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "haiku" } }),
+    complete: answerBothPrompts,
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+  });
+  try {
+    const result = await f.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected criterion scoring to succeed");
+    assert.equal(f.requests.length, 2);
+    for (const request of f.requests) {
+      assert.deepEqual(request.model, { provider: "claude-code", id: "opus", thinkingLevel: "high" });
+    }
+  } finally {
+    f.cleanup();
+    await stub.close();
+  }
+});
+
+test("a failed fix-wording call on the cheap-slot model names it in the unavailable reason", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "sonnet" }, thinkingLevel: "low" }),
+    complete: failFixWording,
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+  });
+  try {
+    const result = await f.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
+    assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
+  } finally {
+    f.cleanup();
+    await stub.close();
+  }
 });

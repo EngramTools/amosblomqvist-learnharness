@@ -1,5 +1,11 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import type { PluginBackendContext, PluginModelSpec, PluginQuestionGradingContext } from "learnharness-plugin-api";
+import type {
+  ChatRecord,
+  ModelCatalogResponse,
+  PluginBackendContext,
+  PluginModelSpec,
+  PluginQuestionGradingContext,
+} from "learnharness-plugin-api";
 import {
   GAP_KINDS,
   literalReaderInstructions,
@@ -58,7 +64,7 @@ function numberedPremises(premises: string[]): string {
   return premises.length ? premises.map((premise, index) => `${index + 1}. ${premise}`).join("\n") : "(none stated)";
 }
 
-/** The chosen criterion comes from Jev; the session model only writes the learner-facing wording. */
+/** The chosen criterion comes from Jev; the grading model only writes the learner-facing wording. */
 export function buildFixWordingMessage(input: FixWordingInput): string {
   const gaps = input.result.gaps.length
     ? input.result.gaps.map(gap => `- ${gap.kind}: ${gap.detail}`).join("\n")
@@ -118,10 +124,17 @@ export function parseLiteralReaderReply(text: string): unknown {
   throw new Error("The literal reader returned no readable JSON.");
 }
 
+/** The host's cheap slot when its model is still listed in the catalog, else null so grading falls back to the session chain. */
+function cheapSlotModel(catalog: ModelCatalogResponse): PluginModelSpec | null {
+  const slot = catalog.slots?.cheap;
+  if (!slot?.model) return null;
+  const listed = catalog.models.some(entry => entry.provider === slot.model.provider && entry.id === slot.model.id);
+  if (!listed) return null;
+  return { provider: slot.model.provider, id: slot.model.id, ...(slot.thinkingLevel ? { thinkingLevel: slot.thinkingLevel } : {}) };
+}
+
 /** Resolve the conversation chain: the session's own model over the strong default. */
-export async function resolveSessionModel(context: LiteralReaderContext, chatId: string): Promise<PluginModelSpec> {
-  const settings = context.learning.getSession(chatId)?.settings;
-  const catalog = await context.inference.catalog();
+function sessionModel(catalog: ModelCatalogResponse, settings: ChatRecord["settings"]): PluginModelSpec {
   const model = settings?.model ?? catalog.defaults?.model;
   if (!model) throw new Error("No model is configured for this session, so the literal reader cannot run. Configure a model and try again.");
   if (!catalog.models.some(entry => entry.provider === model.provider && entry.id === model.id)) {
@@ -129,6 +142,14 @@ export async function resolveSessionModel(context: LiteralReaderContext, chatId:
   }
   const thinkingLevel = settings?.thinkingLevel ?? catalog.defaults?.thinkingLevel;
   return { provider: model.provider, id: model.id, ...(thinkingLevel ? { thinkingLevel } : {}) };
+}
+
+/** Resolve the model for both grading calls: the host's cheap slot when one is
+ * configured, else the session's own model over the strong default. */
+export async function resolveGradingModel(context: LiteralReaderContext, chatId: string): Promise<PluginModelSpec> {
+  const settings = context.learning.getSession(chatId)?.settings;
+  const catalog = await context.inference.catalog();
+  return cheapSlotModel(catalog) ?? sessionModel(catalog, settings);
 }
 
 type ScoreLiteracyRequest = {
@@ -149,7 +170,7 @@ export async function gradeExplainBack<Q, A>(
   grading.signal.throwIfAborted();
   const payload = readPayload(grading.input.payload);
   const answer = readAnswer(grading.answer);
-  const model = await resolveSessionModel(context, grading.chatId);
+  const model = await resolveGradingModel(context, grading.chatId);
   const message = await context.inference.complete({
     model,
     purpose: "user",
@@ -195,7 +216,7 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
     wording = await writeFixWording({ context: request.context, model: request.model, input: { ...request.input, scores }, signal: request.signal });
   } catch (error) {
     request.signal.throwIfAborted();
-    return unavailable(error instanceof Error ? error.message : "The session model could not write the fix wording.");
+    return unavailable(error instanceof Error ? error.message : `The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
   }
   return { status: "ok", criteria: scores.criteria, fix: { ...scores.fix, wording } };
 }
@@ -216,16 +237,17 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
       signal: request.signal,
     });
     request.signal.throwIfAborted();
-    return readFixWording(completionText(message));
+    return readFixWording(completionText(message), request.model);
   } catch (error) {
     request.signal.throwIfAborted();
-    throw new Error("The session model could not write the fix wording.");
+    throw new Error(`The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
   }
 }
 
-export function readFixWording(text: string): string {
+/** Read the wording reply; blank text is a failed call, named after the model that ran. */
+export function readFixWording(text: string, model: PluginModelSpec): string {
   const wording = text.trim();
-  if (!wording) throw new Error("The session model returned no fix wording.");
+  if (!wording) throw new Error(`The explain-back model ${model.provider}/${model.id} returned no fix wording.`);
   return wording;
 }
 
