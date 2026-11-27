@@ -24,10 +24,13 @@ The learner sees the prompt, the step, and its premises, and writes a free-text 
 Dictation appends to the answer as usual. The saved answer is `{ text: string }`, where `text`
 must contain non-whitespace explanation.
 
-`gradeAnswer` resolves the session's conversation model from the session settings over the
-host catalog's strong-slot default, then calls `ctx.inference.complete` with literal-reader
-instructions. The literal reader may not supply a premise, definition, or connection the
-learner did not state. It returns versioned JSON:
+`gradeAnswer` resolves one grading model for both of its host-model calls, then calls
+`ctx.inference.complete` with literal-reader instructions. The grading model is the host
+catalog's cheap slot (Settings → Agent → Models → Cheap) when that slot is set and its model is
+still in the catalog; otherwise grading falls back to the session's conversation model, resolved
+from the session settings over the host catalog's strong-slot default. Set the cheap slot to
+grade with a cheaper model than the one teaching. The literal reader may not supply a premise,
+definition, or connection the learner did not state. It returns versioned JSON:
 
 ```ts
 {
@@ -53,18 +56,21 @@ scoring as `unavailable` with a reason (not a second grading error).
 
 ## Criterion scoring and the single fix
 
-With a TypeSafe API key configured, each grade uses up to three model calls on the same
-grading path: one session-model call for the literal reader, one HTTP request to Jev
-(`POST https://api.typesafe.ai/v1/systemone`, model alias `jev-latest`), and—when Jev
-succeeds—a second session-model call that writes the fix wording. The Jev request state is
+With a TypeSafe API key configured, each grade makes up to two host-model calls plus one Jev
+HTTP request on the same grading path: one grading-model call for the literal reader, one HTTP
+request to Jev (`POST https://api.typesafe.ai/v1/systemone`, model alias `jev-latest`), and—when
+Jev succeeds—a second grading-model call that writes the fix wording. Both host-model calls use
+the same resolved model. The Jev request state is
 `{step, premises, explanation, reconstruction, gaps}`; it asks one `noul` question for each
 gap criterion and one `choice` question for the single most important fix. The answered card
 shows every criterion probability and the chosen fix when scoring status is `ok`.
 
-Jev chooses the criterion and its probability. The session model writes its one- or
+Jev chooses the criterion and its probability. The grading model writes its one- or
 two-sentence wording; it never invents the score. A Jev reply over HTTP 4xx or 5xx, a stall
 past the 15-second request timeout (scoring `unavailable` with a timeout reason), a malformed
-reply, or a failed fix-wording call marks scoring `unavailable` with a reason. The literal
+reply, or a failed fix-wording call marks scoring `unavailable` with a reason that names the
+model that ran (for example, "The explain-back model claude-code/sonnet could not write the fix
+wording."), so the model that actually graded is visible on the answered card. The literal
 reconstruction and gaps remain unchanged, and no scores or fix are shown. With no key, scoring
 is also unavailable; the plugin never substitutes model-produced scores.
 

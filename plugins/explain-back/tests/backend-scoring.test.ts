@@ -272,7 +272,7 @@ test("a failed fix-wording call marks scoring unavailable instead of returning p
     const result = await f.grade(gradingContext());
     assert.deepEqual(result, {
       ...literalResult,
-      scoring: { status: "unavailable", reason: "The session model could not write the fix wording." },
+      scoring: { status: "unavailable", reason: "The explain-back model test/default-model could not write the fix wording." },
     });
   } finally {
     f.cleanup();
