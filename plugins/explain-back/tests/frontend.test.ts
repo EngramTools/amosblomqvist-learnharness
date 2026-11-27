@@ -27,6 +27,9 @@ function fixture() {
       renderer = value;
       return () => { renderer = undefined; };
     },
+    registerSettings() {
+      return () => {};
+    },
   } as unknown as PluginFrontendContext);
   return { document, markdowns, renderer: renderer!, cleanup };
 }
@@ -193,4 +196,73 @@ test("a grading error is shown readably and an unreadable saved result falls bac
   second.abort();
   assert.equal(failed.textContent, "");
   assert.equal(invalid.textContent, "");
+});
+
+test("the answered card shows every criterion probability and the single fix", () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.renderer.mountAnswered!(container, {
+    ...mountContext(controller.signal),
+    answer: { text: "An even number is 2k, so its square is divisible by 4." },
+    grading: {
+      result: {
+        version: 1,
+        reconstruction: "An even number is 2k, and its square is 4k².",
+        gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
+        scoring: {
+          status: "ok",
+          criteria: { "missing step": 0.82, "undefined term": 0.11, "wrong order": 0.04, "conclusion buried": 0.27 },
+          fix: { criterion: "missing step", probability: 0.82, wording: "Say that squaring 2k gives 4k² before concluding divisibility." },
+        },
+      },
+    },
+  });
+
+  const text = container.textContent!;
+  assert.match(text, /Criterion probabilities/);
+  assert.match(text, /Missing step/);
+  assert.match(text, /82%/);
+  assert.match(text, /Undefined term/);
+  assert.match(text, /11%/);
+  assert.match(text, /Wrong order/);
+  assert.match(text, /4%/);
+  assert.match(text, /Conclusion buried/);
+  assert.match(text, /27%/);
+  assert.match(text, /Fix for next time/);
+  assert.match(text, /Say that squaring 2k gives 4k² before concluding divisibility\./);
+  assert.equal(container.querySelectorAll("[data-criterion]").length, 4);
+  assert.equal(container.querySelector(".lh-explain-back__fix")?.getAttribute("data-fix-criterion"), "missing step");
+  controller.abort();
+  assert.equal(container.textContent, "");
+});
+
+test("unavailable scoring shows only the reason and keeps the reconstruction and gaps", () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.renderer.mountAnswered!(container, {
+    ...mountContext(controller.signal),
+    answer: { text: "An even number is 2k." },
+    grading: {
+      result: {
+        version: 1,
+        reconstruction: "An even number is 2k.",
+        gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
+        scoring: { status: "unavailable", reason: "Jev is rate limiting requests (HTTP 429)." },
+      },
+    },
+  });
+
+  const text = container.textContent!;
+  assert.match(text, /What a literal reader understood/);
+  assert.match(text, /An even number is 2k\./);
+  assert.match(text, /Squaring 2k gives 4k²\./);
+  assert.match(text, /Scoring unavailable/);
+  assert.match(text, /Jev is rate limiting requests \(HTTP 429\)\./);
+  assert.equal(container.querySelectorAll("[data-criterion]").length, 0);
+  assert.equal(container.querySelectorAll("[data-fix-criterion]").length, 0);
+  controller.abort();
 });

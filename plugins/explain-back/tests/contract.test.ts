@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { Compile } from "typebox/compile";
 import type { PluginBackendContext, PluginQuestionTypeDefinition } from "learnharness-plugin-api";
@@ -12,26 +15,35 @@ const validPayload = { step: "Every even square is divisible by 4.", premises: [
 test("activation contributes only the explain-back teach question and unregisters it", () => {
   let registered: PluginQuestionTypeDefinition | undefined;
   let unregistered = 0;
+  const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "explain-back-contract-"));
   const cleanup = activate({
+    dataDirectory,
+    signal: new AbortController().signal,
+    events: { emit() {} },
+    handle() { return () => {}; },
     registerQuestionType(value: PluginQuestionTypeDefinition) {
       registered = value;
       return () => { unregistered++; };
     },
   } as unknown as PluginBackendContext);
 
-  assert.ok(registered);
-  const { gradeAnswer, ...rest } = registered;
-  assert.equal(typeof gradeAnswer, "function");
-  assert.deepEqual(rest, definition);
-  assert.equal(registered.id, "explain-back");
-  assert.equal(registered.label, "Explain-back check");
-  assert.equal(registered.contractVersion, 1);
-  assert.equal(registered.showThinking, false);
-  assert.equal(registered.teach?.toolName, "explain_back");
-  assert.equal("probe" in registered, false);
-  assert.equal("execute" in registered, false);
-  cleanup();
-  assert.equal(unregistered, 1);
+  try {
+    assert.ok(registered);
+    const { gradeAnswer, ...rest } = registered;
+    assert.equal(typeof gradeAnswer, "function");
+    assert.deepEqual(rest, definition);
+    assert.equal(registered.id, "explain-back");
+    assert.equal(registered.label, "Explain-back check");
+    assert.equal(registered.contractVersion, 1);
+    assert.equal(registered.showThinking, false);
+    assert.equal(registered.teach?.toolName, "explain_back");
+    assert.equal("probe" in registered, false);
+    assert.equal("execute" in registered, false);
+    cleanup();
+    assert.equal(unregistered, 1);
+  } finally {
+    fs.rmSync(dataDirectory, { recursive: true, force: true });
+  }
 });
 
 test("new explain-back questions require a nonblank step and nonblank premises", () => {
@@ -86,4 +98,22 @@ test("saved grading results accept only the documented version, reconstruction a
   assert.equal(readExplainBackResult({ ...result, gaps: [{ kind: "missing step" }] }), null);
   assert.equal(readExplainBackResult({ ...result, gaps: "none" }), null);
   assert.equal(readExplainBackResult(null), null);
+});
+
+test("saved scoring accepts complete probabilities and one fix, and rejects partial shapes", () => {
+  const result = { version: 1, reconstruction: "An even number is 2k.", gaps: [] };
+  const criteria = { "missing step": 0.82, "undefined term": 0.11, "wrong order": 0.04, "conclusion buried": 0.27 };
+  const ok = { ...result, scoring: { status: "ok", criteria, fix: { criterion: "wrong order", probability: 0.42, wording: "Say what the square depends on first." } } };
+  assert.deepEqual(readExplainBackResult(ok), ok);
+  const unavailable = { ...result, scoring: { status: "unavailable", reason: "Jev is unavailable (HTTP 503)." } };
+  assert.deepEqual(readExplainBackResult(unavailable), unavailable);
+
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, criteria: { ...criteria, "missing step": 1.2 } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, criteria: { ...criteria, "missing step": Number.NaN } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, criteria: { ...criteria, extra: 0.5 } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, fix: { ...ok.scoring.fix, criterion: "missing premise" } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, fix: { ...ok.scoring.fix, probability: -0.1 } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { ...ok.scoring, fix: { ...ok.scoring.fix, wording: "  " } } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { status: "unavailable", reason: "" } }), null);
+  assert.equal(readExplainBackResult({ ...ok, scoring: { status: "maybe" } }), null);
 });

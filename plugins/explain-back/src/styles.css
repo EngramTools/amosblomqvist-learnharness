@@ -86,3 +86,88 @@
   outline: none;
 }
 .lh-explain-back-editor__input::placeholder { color: var(--muted-foreground, #8d8d8d); }
+.lh-explain-back__score-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lh-explain-back__score {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.lh-explain-back__score-value {
+  color: var(--muted-foreground, #8d8d8d);
+  font-variant-numeric: tabular-nums;
+}
+.lh-explain-back__fix-choice {
+  margin: 0 0 0.375rem;
+  font-weight: 500;
+}
+.lh-explain-back__scoring-unavailable {
+  border-color: color-mix(in oklab, var(--border, #434343) 70%, var(--muted-foreground, #8d8d8d));
+}
+.lh-explain-back__scoring-unavailable .lh-explain-back__prose { color: var(--muted-foreground, #8d8d8d); }
+.lh-explain-back-settings {
+  max-width: 34rem;
+  color: var(--foreground, #e6e6e6);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.lh-explain-back-settings__form {
+  display: grid;
+  gap: 0.5rem;
+}
+.lh-explain-back-settings__field {
+  display: grid;
+  gap: 0.375rem;
+}
+.lh-explain-back-settings__label {
+  font-weight: 500;
+}
+.lh-explain-back-settings__input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--border, #434343);
+  border-radius: 0.375rem;
+  background: var(--background, #141414);
+  color: inherit;
+  font: inherit;
+}
+.lh-explain-back-settings__input:focus-visible {
+  outline: 1px solid var(--primary, #e6e6e6);
+  outline-offset: 1px;
+}
+.lh-explain-back-settings__note {
+  margin: 0;
+  color: var(--muted-foreground, #8d8d8d);
+}
+.lh-explain-back-settings__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.lh-explain-back-settings__save {
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--border, #434343);
+  border-radius: 0.375rem;
+  background: color-mix(in oklab, var(--background, #141414) 85%, var(--foreground, #e6e6e6));
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.lh-explain-back-settings__save:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.lh-explain-back-settings__status {
+  min-height: 1.25em;
+  margin: 0;
+  color: var(--muted-foreground, #8d8d8d);
+}
+.lh-explain-back-settings__status-error {
+  color: var(--destructive, #ef4444);
+}

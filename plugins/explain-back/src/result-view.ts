@@ -1,5 +1,5 @@
 import type { PluginFrontendContext, PluginQuestionGradingOutcome, PluginQuestionMountContext } from "learnharness-plugin-api";
-import { readExplainBackResult, type ExplainBackAnswer, type ExplainBackPayload, type ExplainBackResult, type GapKind } from "./contract.ts";
+import { GAP_KINDS, readExplainBackResult, type ExplainBackAnswer, type ExplainBackPayload, type ExplainBackResult, type ExplainBackScoring, type GapKind } from "./contract.ts";
 import { mountQuestionContent } from "./question-view.ts";
 
 type MarkdownUi = Pick<PluginFrontendContext["ui"], "mountMarkdown">;
@@ -36,6 +36,55 @@ function mountError(document: Document, container: HTMLElement, message: string)
   container.append(error);
 }
 
+function formatProbability(probability: number): string {
+  return `${Math.round(probability * 100)}%`;
+}
+
+function mountCriterionScores(document: Document, container: HTMLElement, scoring: Extract<ExplainBackScoring, { status: "ok" }>): void {
+  const scores = section(document, "lh-explain-back__scores", "Criterion probabilities");
+  const list = document.createElement("ul");
+  list.className = "lh-explain-back__score-list";
+  for (const kind of GAP_KINDS) {
+    const probability = scoring.criteria[kind];
+    const item = document.createElement("li");
+    item.className = "lh-explain-back__score";
+    item.dataset.criterion = kind;
+    item.dataset.probability = String(probability);
+    const label = document.createElement("span");
+    label.className = "lh-explain-back__score-label";
+    label.textContent = GAP_LABELS[kind];
+    const value = document.createElement("span");
+    value.className = "lh-explain-back__score-value";
+    value.textContent = formatProbability(probability);
+    item.append(label, value);
+    list.append(item);
+  }
+  scores.append(list);
+  container.append(scores);
+
+  const fix = section(document, "lh-explain-back__fix", "Fix for next time");
+  fix.dataset.fixCriterion = scoring.fix.criterion;
+  fix.dataset.fixProbability = String(scoring.fix.probability);
+  fix.append(paragraph(
+    document,
+    "lh-explain-back__fix-choice",
+    `${GAP_LABELS[scoring.fix.criterion]} · ${formatProbability(scoring.fix.probability)}`,
+  ));
+  fix.append(paragraph(document, "lh-explain-back__prose", scoring.fix.wording));
+  container.append(fix);
+}
+
+function mountScoring(document: Document, container: HTMLElement, scoring: ExplainBackScoring): void {
+  if (scoring.status === "ok") {
+    mountCriterionScores(document, container, scoring);
+    return;
+  }
+  const unavailable = section(document, "lh-explain-back__scoring-unavailable", "Scoring unavailable");
+  unavailable.setAttribute("role", "status");
+  unavailable.append(paragraph(document, "lh-explain-back__prose", scoring.reason));
+  container.append(unavailable);
+}
+
 function mountResult(document: Document, container: HTMLElement, result: ExplainBackResult): void {
   const reconstruction = section(document, "lh-explain-back__reconstruction", "What a literal reader understood");
   reconstruction.append(result.reconstruction.trim() === ""
@@ -65,6 +114,7 @@ function mountResult(document: Document, container: HTMLElement, result: Explain
     gaps.append(list);
   }
   container.append(gaps);
+  if (result.scoring) mountScoring(document, container, result.scoring);
 }
 
 export function mountGrading(container: HTMLElement, grading: PluginQuestionGradingOutcome, signal: AbortSignal): () => void {
