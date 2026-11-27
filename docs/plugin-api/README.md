@@ -221,6 +221,8 @@ These are reachable through public data, event, inheritance or helper-type relat
 - [PlanTree](contracts-plan.md#plantree) — `contracts-plan`
 - [DictatedSpeech](dictation.md#dictatedspeech) — `dictation`
 - [DictatedWord](dictation.md#dictatedword) — `dictation`
+- [DictationLanguage](dictation.md#dictationlanguage) — `dictation`
+- [NOVA_3_LANGUAGES](dictation.md#nova_3_languages) — `dictation`
 - [ServerEvent](events.md#serverevent) — `events`
 - [ServerEvents](events.md#serverevents) — `events`
 - [ServerEventType](events.md#servereventtype) — `events`
@@ -259,4 +261,4 @@ These are reachable through public data, event, inheritance or helper-type relat
 
 Standard JavaScript/DOM types (`Promise`, `AbortSignal`, `File`, `HTMLElement`, and utility types) use their standard contracts. Pi model/messages/tools and TypeBox schemas use the exact peer versions declared by the bundled SDK's `package.json`. Supply those peers when typechecking; they are development types, not permission to import private LearnHarness runtime modules.
 
-Coverage: **140 public types**, **59 supporting declarations**, **902 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.
+Coverage: **140 public types**, **61 supporting declarations**, **903 declared member signatures/variants**. Generation contains no build timestamps or absolute source paths.

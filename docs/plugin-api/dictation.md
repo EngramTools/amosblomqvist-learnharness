@@ -6,6 +6,8 @@
 
 - [DictatedSpeech](#dictatedspeech) — supporting declaration
 - [DictatedWord](#dictatedword) — supporting declaration
+- [DictationLanguage](#dictationlanguage) — supporting declaration
+- [NOVA_3_LANGUAGES](#nova_3_languages) — supporting declaration
 
 ## DictatedSpeech
 
@@ -17,15 +19,17 @@ A flushed final: its transcript text plus every word Deepgram returned.
 export interface DictatedSpeech {
     readonly text: string;
     readonly words: readonly DictatedWord[];
+    readonly language?: DictationLanguage;
 }
 ```
 
-**Related types:** [DictatedWord](dictation.md#dictatedword).
+**Related types:** [DictatedWord](dictation.md#dictatedword), [DictationLanguage](dictation.md#dictationlanguage).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
 - [text](#dictatedspeech-text)
 - [words](#dictatedspeech-words)
+- [language](#dictatedspeech-language)
 
 ### DictatedSpeech text
 
@@ -37,6 +41,16 @@ readonly text: string;
 
 ```ts
 readonly words: readonly DictatedWord[];
+```
+
+### DictatedSpeech language
+
+The dictation language of the run that produced this final. Present
+only on opted-in ({text, words}) deliveries; plain-text targets never
+see it, so the default path's output shape is unchanged.
+
+```ts
+readonly language?: DictationLanguage;
 ```
 
 ## DictatedWord
@@ -84,4 +98,442 @@ readonly end: number;
 
 ```ts
 readonly confidence: number;
+```
+
+## DictationLanguage
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+export type DictationLanguage = "multi" | (typeof NOVA_3_LANGUAGES)[number][1][number];
+```
+
+**Related types:** [NOVA_3_LANGUAGES](dictation.md#nova_3_languages).
+
+## NOVA_3_LANGUAGES
+
+Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
+
+```ts
+declare const NOVA_3_LANGUAGES: readonly [
+    readonly [
+        "Afrikaans",
+        readonly [
+            "af",
+            "af-ZA"
+        ]
+    ],
+    readonly [
+        "Arabic",
+        readonly [
+            "ar",
+            "ar-AE",
+            "ar-SA",
+            "ar-QA",
+            "ar-KW",
+            "ar-SY",
+            "ar-LB",
+            "ar-PS",
+            "ar-JO",
+            "ar-EG",
+            "ar-SD",
+            "ar-TD",
+            "ar-MA",
+            "ar-DZ",
+            "ar-TN",
+            "ar-IQ",
+            "ar-IR"
+        ]
+    ],
+    readonly [
+        "Armenian",
+        readonly [
+            "hy"
+        ]
+    ],
+    readonly [
+        "Assamese",
+        readonly [
+            "as",
+            "as-IN"
+        ]
+    ],
+    readonly [
+        "Belarusian",
+        readonly [
+            "be"
+        ]
+    ],
+    readonly [
+        "Bengali",
+        readonly [
+            "bn"
+        ]
+    ],
+    readonly [
+        "Bosnian",
+        readonly [
+            "bs"
+        ]
+    ],
+    readonly [
+        "Bulgarian",
+        readonly [
+            "bg"
+        ]
+    ],
+    readonly [
+        "Catalan",
+        readonly [
+            "ca"
+        ]
+    ],
+    readonly [
+        "Chinese (Cantonese, Traditional)",
+        readonly [
+            "zh-HK"
+        ]
+    ],
+    readonly [
+        "Chinese (Mandarin, Simplified)",
+        readonly [
+            "zh",
+            "zh-CN",
+            "zh-Hans"
+        ]
+    ],
+    readonly [
+        "Chinese (Mandarin, Traditional)",
+        readonly [
+            "zh-TW",
+            "zh-Hant"
+        ]
+    ],
+    readonly [
+        "Croatian",
+        readonly [
+            "hr"
+        ]
+    ],
+    readonly [
+        "Czech",
+        readonly [
+            "cs",
+            "cs-CZ"
+        ]
+    ],
+    readonly [
+        "Danish",
+        readonly [
+            "da",
+            "da-DK"
+        ]
+    ],
+    readonly [
+        "Dutch",
+        readonly [
+            "nl"
+        ]
+    ],
+    readonly [
+        "English",
+        readonly [
+            "en",
+            "en-US",
+            "en-AU",
+            "en-GB",
+            "en-IN",
+            "en-NZ"
+        ]
+    ],
+    readonly [
+        "Estonian",
+        readonly [
+            "et"
+        ]
+    ],
+    readonly [
+        "Finnish",
+        readonly [
+            "fi"
+        ]
+    ],
+    readonly [
+        "Flemish",
+        readonly [
+            "nl-BE"
+        ]
+    ],
+    readonly [
+        "French",
+        readonly [
+            "fr",
+            "fr-CA"
+        ]
+    ],
+    readonly [
+        "Georgian",
+        readonly [
+            "ka",
+            "ka-GE"
+        ]
+    ],
+    readonly [
+        "German",
+        readonly [
+            "de"
+        ]
+    ],
+    readonly [
+        "German (Switzerland)",
+        readonly [
+            "de-CH"
+        ]
+    ],
+    readonly [
+        "Greek",
+        readonly [
+            "el"
+        ]
+    ],
+    readonly [
+        "Gujarati",
+        readonly [
+            "gu",
+            "gu-IN"
+        ]
+    ],
+    readonly [
+        "Hebrew",
+        readonly [
+            "he"
+        ]
+    ],
+    readonly [
+        "Hindi",
+        readonly [
+            "hi"
+        ]
+    ],
+    readonly [
+        "Hungarian",
+        readonly [
+            "hu"
+        ]
+    ],
+    readonly [
+        "Indonesian",
+        readonly [
+            "id"
+        ]
+    ],
+    readonly [
+        "Italian",
+        readonly [
+            "it"
+        ]
+    ],
+    readonly [
+        "Japanese",
+        readonly [
+            "ja"
+        ]
+    ],
+    readonly [
+        "Kannada",
+        readonly [
+            "kn"
+        ]
+    ],
+    readonly [
+        "Kazakh",
+        readonly [
+            "kk",
+            "kk-KZ"
+        ]
+    ],
+    readonly [
+        "Korean",
+        readonly [
+            "ko",
+            "ko-KR"
+        ]
+    ],
+    readonly [
+        "Latvian",
+        readonly [
+            "lv"
+        ]
+    ],
+    readonly [
+        "Lithuanian",
+        readonly [
+            "lt"
+        ]
+    ],
+    readonly [
+        "Macedonian",
+        readonly [
+            "mk"
+        ]
+    ],
+    readonly [
+        "Malay",
+        readonly [
+            "ms"
+        ]
+    ],
+    readonly [
+        "Marathi",
+        readonly [
+            "mr"
+        ]
+    ],
+    readonly [
+        "Mongolian",
+        readonly [
+            "mn"
+        ]
+    ],
+    readonly [
+        "Nepali",
+        readonly [
+            "ne"
+        ]
+    ],
+    readonly [
+        "Norwegian",
+        readonly [
+            "no"
+        ]
+    ],
+    readonly [
+        "Pashto",
+        readonly [
+            "ps",
+            "ps-AF"
+        ]
+    ],
+    readonly [
+        "Persian",
+        readonly [
+            "fa"
+        ]
+    ],
+    readonly [
+        "Polish",
+        readonly [
+            "pl"
+        ]
+    ],
+    readonly [
+        "Portuguese",
+        readonly [
+            "pt",
+            "pt-BR",
+            "pt-PT"
+        ]
+    ],
+    readonly [
+        "Punjabi",
+        readonly [
+            "pa",
+            "pa-IN"
+        ]
+    ],
+    readonly [
+        "Romanian",
+        readonly [
+            "ro"
+        ]
+    ],
+    readonly [
+        "Russian",
+        readonly [
+            "ru"
+        ]
+    ],
+    readonly [
+        "Serbian",
+        readonly [
+            "sr"
+        ]
+    ],
+    readonly [
+        "Slovak",
+        readonly [
+            "sk"
+        ]
+    ],
+    readonly [
+        "Slovenian",
+        readonly [
+            "sl"
+        ]
+    ],
+    readonly [
+        "Spanish",
+        readonly [
+            "es",
+            "es-419"
+        ]
+    ],
+    readonly [
+        "Swedish",
+        readonly [
+            "sv",
+            "sv-SE"
+        ]
+    ],
+    readonly [
+        "Tagalog",
+        readonly [
+            "tl"
+        ]
+    ],
+    readonly [
+        "Tamil",
+        readonly [
+            "ta"
+        ]
+    ],
+    readonly [
+        "Telugu",
+        readonly [
+            "te"
+        ]
+    ],
+    readonly [
+        "Thai",
+        readonly [
+            "th",
+            "th-TH"
+        ]
+    ],
+    readonly [
+        "Turkish",
+        readonly [
+            "tr",
+            "tr-TR"
+        ]
+    ],
+    readonly [
+        "Ukrainian",
+        readonly [
+            "uk"
+        ]
+    ],
+    readonly [
+        "Urdu",
+        readonly [
+            "ur"
+        ]
+    ],
+    readonly [
+        "Vietnamese",
+        readonly [
+            "vi"
+        ]
+    ]
+];
 ```
