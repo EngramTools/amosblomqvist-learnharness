@@ -200,7 +200,15 @@ handle/publication; schema-valid falsy/empty values may qualify. Drafts need not
 the schema. `empty` keeps no value; use `unready` to retain incomplete text.
 
 Required handle: `update({answer,active})`, `focus()`, `dispose()`; optional
-`handleKeyDown(key): "handled" | "pass"`, `appendTranscript(text)` (sync/async).
+`handleKeyDown(key): "handled" | "pass"`, `appendTranscript(text)` (sync/async),
+and the opt-in pair `wantsDictatedWords: true` + `appendDictatedSpeech({text, words})`
+(sync/async). Opted-in editors receive `{text, words}` through `appendDictatedSpeech`
+instead of a string through `appendTranscript`; `words` carries `word`, `start`, `end`
+and `confidence` for every final, in order. The host then also asks Deepgram to keep
+filler words (disfluencies such as "uh" and "um", normally dropped) when the dictation
+language is English; word timings arrive in every language. The flag without the
+callback, or the callback without the flag, is not an opt-in: the editor keeps
+receiving plain text through `appendTranscript`. Host Thinking always receives text.
 Apply controlled updates without echoing publication or resetting identical selection/
 composition. Async mounts/late callbacks are exact-occurrence/generation scoped: obsolete
 handles cannot publish, focus, consume keys or receive speech.
@@ -232,8 +240,8 @@ native default while suppressing host routing. Covered/hidden/stale editors cann
 Keep the editor outside the submit footer's native form; no fabricated keyboard dispatch.
 
 Dictation goes to unrevealed check ReadingThinking; after reveal/open probe/predict it
-goes to host Thinking when enabled, otherwise explicit editor `appendTranscript` if
-provided. Without either, microphone stays visible/disabled, never routes to a hidden
+goes to host Thinking when enabled, otherwise explicit editor `appendTranscript` (or
+`appendDictatedSpeech` for an opted-in editor) if provided. Without either, microphone stays visible/disabled, never routes to a hidden
 composer. Folding does not erase/redirect it. Finish before reveal/submit; transcript
 callbacks must publish before resolving. Settle/cancel obsolete capture destinations.
 

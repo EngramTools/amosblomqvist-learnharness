@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type RefObject } from "react";
 import type { ChatInput } from "@/src/core";
-import { pluginQuestionOccurrenceKey, type PluginQuestionSnapshot } from "@/src/core";
+import { pluginQuestionOccurrenceKey, type DictatedSpeech, type PluginQuestionSnapshot } from "@/src/core";
 import type { PluginQuestionDraft } from "./session-core";
 import type { QuestionRendererRegistration } from "./plugin-manager";
 import { usePlugins } from "./plugins";
@@ -131,15 +131,18 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 	}), [controller, readingRef]);
 
 	const speechLease = snapshot.showThinking ? null : lease.current;
-	const append = useCallback(async (text: string) => {
+	const deliver = useCallback(async (text: string, speech?: DictatedSpeech) => {
 		const now = current.current;
 		if (now.reveal || keyOf(now.snapshot) !== key) return; // Reading owns the unrevealed phase.
 		// Host thinking is a draft channel, not plugin execution authority:
 		// an already-captured final must survive reconciliation or compaction.
 		if (snapshot.showThinking) { draft.thinking = joinDictation(draft.thinking, text); render(); }
-		else if (!failed && speechLease === lease.current && now.registration && leaseRegistration.current === now.registration && now.available) await speechLease?.append(text);
+		else if (!failed && speechLease === lease.current && now.registration && leaseRegistration.current === now.registration && now.available) await (speech ? speechLease?.appendSpeech(speech) : speechLease?.append(text));
 	}, [key, snapshot.showThinking, speechLease, reveal, failed, draft]);
-	usePluginQuestionDictationTarget(append, !reveal);
+	const append = useCallback((text: string) => deliver(text), [deliver]);
+	const appendSpeech = useCallback((speech: DictatedSpeech) => deliver(speech.text, speech), [deliver]);
+	// Only an opted-in plugin editor receives {text, words}; host Thinking and every other editor stay text-only.
+	usePluginQuestionDictationTarget(append, !reveal, !snapshot.showThinking && speechLease?.wantsWords ? appendSpeech : undefined);
 	const micAvailable = reveal || snapshot.showThinking || (!!registration && leaseRegistration.current === registration && !!lease.current?.speech && available && !failed);
 	useEffect(() => { onMicAvailable(micAvailable); return () => onMicAvailable(false); }, [micAvailable, onMicAvailable]);
 	const unavailable = canonicalReady && (!available || !registration || failed);

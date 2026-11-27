@@ -485,11 +485,13 @@ export interface PluginQuestionEditorHandle {
     focus(): void;
     handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
     appendTranscript?(text: string): void | Promise<void>;
+    wantsDictatedWords?: boolean;
+    appendDictatedSpeech?(speech: DictatedSpeech): void | Promise<void>;
     dispose(): void;
 }
 ```
 
-**Related types:** [PluginQuestionAnswerState](plugin-questions.md#pluginquestionanswerstate), [PluginQuestionEditorKey](plugin-questions.md#pluginquestioneditorkey).
+**Related types:** [DictatedSpeech](dictation.md#dictatedspeech), [PluginQuestionAnswerState](plugin-questions.md#pluginquestionanswerstate), [PluginQuestionEditorKey](plugin-questions.md#pluginquestioneditorkey).
 
 **Member index** (including nested object members; inherited members are defined in the linked base types):
 
@@ -497,6 +499,8 @@ export interface PluginQuestionEditorHandle {
 - [focus](#pluginquestioneditorhandle-focus)
 - [handleKeyDown](#pluginquestioneditorhandle-handlekeydown)
 - [appendTranscript](#pluginquestioneditorhandle-appendtranscript)
+- [wantsDictatedWords](#pluginquestioneditorhandle-wantsdictatedwords)
+- [appendDictatedSpeech](#pluginquestioneditorhandle-appenddictatedspeech)
 - [dispose](#pluginquestioneditorhandle-dispose)
 
 ### PluginQuestionEditorHandle update
@@ -548,6 +552,36 @@ appendTranscript?(text: string): void | Promise<void>;
 | Parameter | Type |
 | --- | --- |
 | `text` | `string` |
+
+**Returns:** `void \| Promise<void>`.
+
+### PluginQuestionEditorHandle wantsDictatedWords
+
+Opt-in to per-word timings: set `wantsDictatedWords: true` and implement
+`appendDictatedSpeech`. Dictation then also asks Deepgram to keep filler
+words (disfluencies such as "uh" and "um", which are otherwise dropped
+from the transcript) when the dictation language is English. Read at
+dictation start. Without both, the editor keeps receiving plain
+transcript text through `appendTranscript`.
+
+```ts
+wantsDictatedWords?: boolean;
+```
+
+### PluginQuestionEditorHandle appendDictatedSpeech
+
+Receives `{ text, words }` instead of a plain string when the editor
+opted in with `wantsDictatedWords`. `text` is the transcript
+`appendTranscript` would have received; `words` are every final's words
+in order. Same sync/async publication rules as `appendTranscript`.
+
+```ts
+appendDictatedSpeech?(speech: DictatedSpeech): void | Promise<void>;
+```
+
+| Parameter | Type |
+| --- | --- |
+| `speech` | `DictatedSpeech` |
 
 **Returns:** `void \| Promise<void>`.
 

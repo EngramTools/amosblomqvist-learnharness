@@ -81,10 +81,41 @@ export function isDictationLanguage(value: unknown): value is DictationLanguage 
 	return DICTATION_LANGUAGES.some(({ code }) => code === value);
 }
 
-/** Only language varies. Keep the owner's tuned streaming parameters. */
-export function deepgramListenUrl(language: DictationLanguage): string {
+/** One final's words, in Deepgram's order. Timings are relative to the audio
+ *  stream start (seconds); confidence is 0..1. */
+export interface DictatedWord {
+	readonly word: string;
+	readonly start: number;
+	readonly end: number;
+	readonly confidence: number;
+}
+
+/** A flushed final: its transcript text plus every word Deepgram returned. */
+export interface DictatedSpeech {
+	readonly text: string;
+	readonly words: readonly DictatedWord[];
+}
+
+export interface DeepgramListenOptions {
+	/** Ask Deepgram to keep filler words (disfluencies such as uh, um, mhmm)
+	 *  as normal words instead of dropping them — nova family, English only.
+	 *  Never requested for other languages. */
+	readonly fillerWords?: boolean;
+}
+
+/** The owner's tuned streaming parameters. Language always varies;
+ *  `fillerWords` adds `filler_words=true` when opted in. */
+export function deepgramListenUrl(language: DictationLanguage, options: DeepgramListenOptions = {}): string {
+	const filler = options.fillerWords && isEnglishDictationLanguage(language) ? "&filler_words=true" : "";
 	return "wss://api.deepgram.com/v1/listen" +
 		"?model=nova-3&encoding=linear16&sample_rate=16000&channels=1" +
 		"&smart_format=true&punctuate=true&endpointing=300" +
-		`&language=${encodeURIComponent(language)}`;
+		`&language=${encodeURIComponent(language)}${filler}`;
+}
+
+/** Filler words are documented for nova-family English models only; every
+ *  monolingual/multilingual code this build offers is nova-3, so the
+ *  language prefix is the whole gate. */
+export function isEnglishDictationLanguage(language: DictationLanguage): boolean {
+	return language === "multi" || language === "en" || language.startsWith("en-");
 }
