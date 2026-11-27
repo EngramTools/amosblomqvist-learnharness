@@ -79,6 +79,27 @@ test("parses the versioned model and ignores the request alias", async () => {
   }
 });
 
+test("HTTP error responses release the body so fetch connections are not retained", async () => {
+  let bodyReleased = false;
+  const fetchMock: typeof fetch = async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"detail":"unavailable"}'));
+        controller.close();
+      },
+      cancel() {
+        bodyReleased = true;
+      },
+    });
+    return new Response(stream, { status: 503, statusText: "Service Unavailable" });
+  };
+  await assert.rejects(
+    scoreExplainBack(state, { apiKey: "key", fetch: fetchMock, endpoint: "http://127.0.0.1/unused" }),
+    (error: unknown) => error instanceof JevUnavailableError && /503/.test(error.message),
+  );
+  assert.equal(bodyReleased, true);
+});
+
 test("maps HTTP failures to safe unavailable errors without the API key", async () => {
   let status = 400;
   const stub = await stubJsonServer((_request, response) => sendJson(response, status, { detail: "Authorization header echo: typesafe-test-key" }));

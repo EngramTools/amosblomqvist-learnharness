@@ -95,7 +95,10 @@ export async function scoreExplainBack(state: JevState, options: JevOptions): Pr
       if (error instanceof JevUnavailableError) throw error;
       throw new JevUnavailableError("Jev could not be reached.");
     });
-    if (!response.ok) throw new JevUnavailableError(httpReason(response.status));
+    if (!response.ok) {
+      await discardResponseBody(response);
+      throw new JevUnavailableError(httpReason(response.status));
+    }
     let body: unknown;
     try {
       body = await response.json();
@@ -108,6 +111,14 @@ export async function scoreExplainBack(state: JevState, options: JevOptions): Pr
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+async function discardResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    await response.arrayBuffer().catch(() => {});
   }
 }
 
