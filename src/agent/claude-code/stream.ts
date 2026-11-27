@@ -72,7 +72,9 @@ const REFUSAL_MESSAGE = "The model refused to complete the request";
 const ABORT_MESSAGE = "Request was aborted";
 const START_FAILED_MESSAGE = "claude CLI failed to start";
 const NO_STOP_REASON_MESSAGE = "claude CLI ended the message without a stop reason";
+const NOT_STREAMED_MESSAGE = "claude CLI finished without streaming its response";
 const NOT_SIGNED_IN_ERROR = "authentication_failed";
+const ABANDONED_CALL_MESSAGE = "claude CLI abandoned this tool call";
 
 export function toEffort(level: ThinkingLevel | undefined): AnthropicEffort {
 	return level ? EFFORTS[level] : "medium";
@@ -150,8 +152,14 @@ class ClaudeTurn {
 	private readonly partialJson = new Map<number, string>();
 	private readonly toolBlocks = new Map<number, ToolCall>();
 	private readonly intents: ToolCall[] = [];
+	/** Where the current CLI message began, so an abandoned attempt can be rolled back. */
+	private messageStart: { content: number; intents: number; stopReason: StopReason } = { content: 0, intents: 0, stopReason: "pending" };
 	/** The current message called a harness tool by its bare name; the CLI rejects that call itself. */
 	skippedBareCall = false;
+	/** The CLI abandoned the last message and has not started its retry yet. */
+	awaitingRetry = false;
+	/** Ids of the tool calls the CLI abandoned; their bridge requests must never be admitted. */
+	readonly abandonedCallIds = new Set<string>();
 	started = false;
 	finished = false;
 
@@ -169,6 +177,8 @@ class ClaudeTurn {
 		switch (event.type) {
 			case "messageStart":
 				this.skippedBareCall = false;
+				this.awaitingRetry = false;
+				this.messageStart = { content: this.output.content.length, intents: this.intents.length, stopReason: this.output.stopReason };
 				this.updateUsage(event.usage);
 				this.start();
 				return;
@@ -229,12 +239,22 @@ class ClaudeTurn {
 				if (this.output.stopReason !== "toolUse") this.finish();
 				return;
 
+			case "messageAbandoned":
+				this.abandonMessage();
+				return;
+
 			case "assistantError":
 				this.fail(getAssistantErrorMessage(event.error, event.text), "error");
 				return;
 
 			case "resultError":
 				this.fail(event.text, "error");
+				return;
+
+			case "resultSuccess":
+				// The turn is still open, so the CLI answered without streaming: its non-streaming fallback
+				// sends one whole assistant line that this parser does not read.
+				this.fail(NOT_STREAMED_MESSAGE, "error");
 				return;
 		}
 	}
@@ -269,6 +289,20 @@ class ClaudeTurn {
 		this.output.errorMessage = message;
 		this.stream.push({ type: "error", reason, error: this.output });
 		this.stream.end();
+	}
+
+	/** Drop the abandoned attempt; the CLI's retried message streams the whole response again. */
+	private abandonMessage(): void {
+		this.output.content.splice(this.messageStart.content);
+		const abandoned = this.intents.slice(this.messageStart.intents);
+		this.intents.splice(this.messageStart.intents);
+		for (const intent of abandoned) this.abandonedCallIds.add(intent.id);
+		this.output.stopReason = this.messageStart.stopReason;
+		delete this.output.errorMessage;
+		this.contentIndexes.clear();
+		this.partialJson.clear();
+		this.toolBlocks.clear();
+		this.awaitingRetry = true;
 	}
 
 	private start(): void {
@@ -420,6 +454,8 @@ class ClaudeProcess implements LiveProcess {
 	private sourceComplete = false;
 	private admitted: PendingToolCall[] = [];
 	private readonly cancelledIds = new Set<string>();
+	/** Ids of the tool calls the CLI abandoned; their bridge requests must never be admitted. */
+	private readonly abandonedCallIds = new Set<string>();
 	private pendingError: string | undefined;
 	private contextWindow: number | undefined;
 	private contextProbe: ContextWindowProbe | undefined;
@@ -535,9 +571,32 @@ class ClaudeProcess implements LiveProcess {
 		this.sourceCalls = this.sourceCalls.filter((intent) => intent.id !== call.id);
 	}
 
+	/** Answer the bridge requests of an abandoned attempt and drop them, so a retry cannot admit them. */
+	private discardAbandonedCalls(): void {
+		for (const call of this.bridge.getPendingToolCalls()) {
+			if (!this.abandonedCallIds.has(call.id)) continue;
+			this.bridge.resolveToolCall(call, {
+				role: "toolResult",
+				toolCallId: call.id,
+				toolName: call.name,
+				content: [{ type: "text", text: ABANDONED_CALL_MESSAGE }],
+				isError: true,
+				timestamp: Date.now(),
+			});
+		}
+	}
+
 	/** Only authenticated MCP requests, never stdout intent alone, admit side effects. */
 	flushAdmissions(): void {
-		if (this.stopping || this.turn.finished || !this.sourceComplete) return;
+		if (this.stopping || this.turn.finished) return;
+		// A request from an abandoned attempt must never reach Pi, not even when
+		// the CLI retried the message and streamed the very same call again.
+		this.discardAbandonedCalls();
+		if (this.turn.awaitingRetry && this.bridge.getPendingToolCalls().length > 0) {
+			this.fail("claude CLI called a tool from a response it did not stream");
+			return;
+		}
+		if (!this.sourceComplete) return;
 		const pending = this.bridge.getPendingToolCalls();
 		if (pending.length === 0) return;
 		const calls: ToolCall[] = [];
@@ -609,6 +668,12 @@ class ClaudeProcess implements LiveProcess {
 		if (event.type === "messageStart") this.contextProbe?.refresh();
 		this.turn.handle(event);
 		if (this.turn.finished) { this.kill(); return; }
+		if (event.type === "messageAbandoned") {
+			// The request of the abandoned call may already wait in the bridge.
+			for (const id of this.turn.abandonedCallIds) this.abandonedCallIds.add(id);
+			this.discardAbandonedCalls();
+			return;
+		}
 		if (event.type === "messageStop" && this.turn.waitingForAdmission) {
 			const intents = this.turn.getIntents();
 			// Only rejected bare calls: keep the turn open for the model's retry in its next message.
