@@ -139,7 +139,7 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 		if (snapshot.showThinking) { draft.thinking = joinDictation(draft.thinking, text); render(); }
 		else if (!failed && speechLease === lease.current && now.registration && leaseRegistration.current === now.registration && now.available) await speechLease?.append(text);
 	}, [key, snapshot.showThinking, speechLease, reveal, failed, draft]);
-	usePluginQuestionDictationTarget(append, !reveal);
+	usePluginQuestionDictationTarget(append, !reveal, !snapshot.showThinking && !!speechLease?.wantsWords);
 	const micAvailable = reveal || snapshot.showThinking || (!!registration && leaseRegistration.current === registration && !!lease.current?.speech && available && !failed);
 	useEffect(() => { onMicAvailable(micAvailable); return () => onMicAvailable(false); }, [micAvailable, onMicAvailable]);
 	const unavailable = canonicalReady && (!available || !registration || failed);

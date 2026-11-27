@@ -1,5 +1,11 @@
 # Plugin question tools — API v1 contract
 
+> ADR (operator, 2026-11-26): dictation word-timing opt-in. A plugin question
+> editor opts in with an optional `wantsDictatedWords: boolean` on the editor
+> handle, read at dictation start; the core delivers `{text, words}` to
+> opted-in editors only (every other target keeps plain text) and gates
+> `filler_words=true` by language (English only).
+
 Custom teaching questions share the native question lifecycle. This contract describes
 the matching source/build. Match the target app using the downloaded skill's `bundle.json`;
 API v1 alone does not identify every available capability. Exact types live in

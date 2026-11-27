@@ -485,6 +485,7 @@ export interface PluginQuestionEditorHandle {
     focus(): void;
     handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
     appendTranscript?(text: string): void | Promise<void>;
+    wantsDictatedWords?: boolean;
     dispose(): void;
 }
 ```
@@ -497,6 +498,7 @@ export interface PluginQuestionEditorHandle {
 - [focus](#pluginquestioneditorhandle-focus)
 - [handleKeyDown](#pluginquestioneditorhandle-handlekeydown)
 - [appendTranscript](#pluginquestioneditorhandle-appendtranscript)
+- [wantsDictatedWords](#pluginquestioneditorhandle-wantsdictatedwords)
 - [dispose](#pluginquestioneditorhandle-dispose)
 
 ### PluginQuestionEditorHandle update
@@ -550,6 +552,17 @@ appendTranscript?(text: string): void | Promise<void>;
 | `text` | `string` |
 
 **Returns:** `void \| Promise<void>`.
+
+### PluginQuestionEditorHandle wantsDictatedWords
+
+Opt-in: the editor accepts per-word timings and wants Deepgram filler
+words requested (English only — the core gates it by language).
+Read at dictation start; without it the editor keeps receiving plain
+transcript text.
+
+```ts
+wantsDictatedWords?: boolean;
+```
 
 ### PluginQuestionEditorHandle dispose
 

@@ -61,6 +61,8 @@ export interface PluginProblemEditorHandle {
   focus(): void;
   handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
   appendTranscript?(text: string): void | Promise<void>;
+  /** Opt-in: see PluginQuestionEditorHandle.wantsDictatedWords. */
+  wantsDictatedWords?: boolean;
   dispose(): void;
 }
 export interface PluginProblemRenderer<Q = JsonValue, S = JsonValue> {

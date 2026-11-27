@@ -65,6 +65,11 @@ export interface PluginQuestionEditorHandle {
 	 * Meta/Ctrl+Enter remains reserved host submission. */
 	handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
 	appendTranscript?(text: string): void | Promise<void>;
+	/** Opt-in: the editor accepts per-word timings and wants Deepgram filler
+	 *  words requested (English only — the core gates it by language).
+	 *  Read at dictation start; without it the editor keeps receiving plain
+	 *  transcript text. */
+	wantsDictatedWords?: boolean;
 	dispose(): void;
 }
 export interface PluginQuestionRenderer<Q = JsonValue, A = JsonValue> {

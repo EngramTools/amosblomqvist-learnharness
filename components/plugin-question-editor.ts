@@ -9,7 +9,7 @@ export function controlledPluginAnswer(value: PluginQuestionAnswerState): Plugin
 	if (!value || !["empty", "ready", "unready"].includes(value.status)) throw new Error("Invalid answer state");
 	return value.status === "empty" ? Object.freeze({ status: "empty" }) : freezePluginQuestionValue({ status: value.status, value: clonePluginQuestionJson(value.value) });
 }
-type EditorHandle = Pick<PluginQuestionEditorHandle, "focus" | "dispose" | "handleKeyDown" | "appendTranscript"> & { update: unknown };
+type EditorHandle = Pick<PluginQuestionEditorHandle, "focus" | "dispose" | "handleKeyDown" | "appendTranscript"> & { update: unknown; wantsDictatedWords?: boolean };
 /** Both question and practice editors use one generation/cleanup authority. */
 function createEditorLease<P, H extends EditorHandle>(options: {
 	props(signal: AbortSignal, onChange: (state: PluginQuestionAnswerState) => void): P;
@@ -45,6 +45,8 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		get ready() { return current && handle !== null && publishedReady; },
 		get mounted() { return current && handle !== null; },
 		get speech() { return current && !!handle?.appendTranscript; },
+		/** Opt-in state of the adopted handle (default false). */
+		get wantsWords() { return current && !!handle?.wantsDictatedWords; },
 		update(state: PluginQuestionAnswerState, active: boolean) { if (current && handle) try { options.update(handle, state, active); } catch { fail(); } },
 		focus() { if (current && handle) try { handle.focus(); } catch { fail(); } },
 		key(key: PluginQuestionEditorKey): "handled" | "pass" { if (current && handle?.handleKeyDown) try { return handle.handleKeyDown(key) === "handled" ? "handled" : "pass"; } catch { fail(); } return "pass"; },

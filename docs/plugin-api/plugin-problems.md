@@ -90,6 +90,7 @@ export interface PluginProblemEditorHandle {
     focus(): void;
     handleKeyDown?(key: PluginQuestionEditorKey): "handled" | "pass";
     appendTranscript?(text: string): void | Promise<void>;
+    wantsDictatedWords?: boolean;
     dispose(): void;
 }
 ```
@@ -102,6 +103,7 @@ export interface PluginProblemEditorHandle {
 - [focus](#pluginproblemeditorhandle-focus)
 - [handleKeyDown](#pluginproblemeditorhandle-handlekeydown)
 - [appendTranscript](#pluginproblemeditorhandle-appendtranscript)
+- [wantsDictatedWords](#pluginproblemeditorhandle-wantsdictatedwords)
 - [dispose](#pluginproblemeditorhandle-dispose)
 
 ### PluginProblemEditorHandle update
@@ -150,6 +152,14 @@ appendTranscript?(text: string): void | Promise<void>;
 | `text` | `string` |
 
 **Returns:** `void \| Promise<void>`.
+
+### PluginProblemEditorHandle wantsDictatedWords
+
+Opt-in: see PluginQuestionEditorHandle.wantsDictatedWords.
+
+```ts
+wantsDictatedWords?: boolean;
+```
 
 ### PluginProblemEditorHandle dispose
 
