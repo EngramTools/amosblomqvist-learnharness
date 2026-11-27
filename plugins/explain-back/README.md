@@ -34,12 +34,39 @@ learner did not state. It returns versioned JSON:
   version: 1;
   reconstruction: string; // may be "" when the learner's words establish nothing
   gaps: { kind: "missing step" | "undefined term" | "wrong order" | "conclusion buried"; detail: string }[];
+  scoring:
+    | {
+        status: "ok";
+        criteria: Record<GapKind, number>; // probability the gap is present, 0 to 1
+        fix: { criterion: GapKind; probability: number; wording: string };
+      }
+    | { status: "unavailable"; reason: string };
 }
 ```
 
 If the model call fails or its result is unreadable, the host still saves the answer with a
 grading error; the answered card shows that error above the saved explanation. The lesson
 continues normally.
+
+## Criterion scoring and the single fix
+
+With a TypeSafe API key configured, the grader sends one request to Jev
+(`POST https://api.typesafe.ai/v1/systemone`, model alias `jev-latest`). The request state is
+`{step, premises, explanation, reconstruction, gaps}`; it asks one `noul` question for each
+gap criterion and one `choice` question for the single most important fix. The answered card
+shows every criterion probability and the chosen fix.
+
+Jev chooses the criterion and its probability. The session model writes its one- or
+two-sentence wording; it never invents the score. A Jev reply over HTTP 4xx, 429, 5xx, or 529,
+a timeout (15 seconds), a malformed reply, or a failed wording call marks scoring
+`unavailable` with a reason. The literal reconstruction and gaps remain unchanged, and no
+scores or fix are shown. With no key, scoring is also unavailable; the plugin never substitutes
+model-produced scores.
+
+Settings stores the key as `<data>/settings.json` with owner-only permissions. The frontend
+receives only whether a key exists, so the key is never rendered back, logged, or included in
+inference usage records. The settings row states that learner text is sent to TypeSafe for
+scoring. TypeSafe does not train on customer requests; zero data retention is enterprise-only.
 
 ## Build and install
 

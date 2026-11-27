@@ -18,7 +18,18 @@ export type ExplainBackAnswer = {
 export const GAP_KINDS = ["missing step", "undefined term", "wrong order", "conclusion buried"] as const;
 export type GapKind = (typeof GAP_KINDS)[number];
 export type ExplainBackGap = { kind: GapKind; detail: string };
-export type ExplainBackResult = { version: typeof RESULT_VERSION; reconstruction: string; gaps: ExplainBackGap[] };
+export type ExplainBackCriterionScores = Record<GapKind, number>;
+export type ExplainBackFix = { criterion: GapKind; probability: number; wording: string };
+export type ExplainBackScoring =
+  | { status: "ok"; criteria: ExplainBackCriterionScores; fix: ExplainBackFix }
+  | { status: "unavailable"; reason: string };
+export type ExplainBackResult = {
+  version: typeof RESULT_VERSION;
+  reconstruction: string;
+  gaps: ExplainBackGap[];
+  /** Absent only on results saved before scoring was added. */
+  scoring?: ExplainBackScoring;
+};
 
 /**
  * The literal reader is deliberately not a tutor. It may only rebuild what the
@@ -113,6 +124,31 @@ function readGap(value: unknown): ExplainBackGap | null {
   return { kind: value.kind, detail: value.detail };
 }
 
+function readCriterionScores(value: unknown): ExplainBackCriterionScores | null {
+  if (!record(value) || Object.keys(value).length !== GAP_KINDS.length) return null;
+  const scores = {} as ExplainBackCriterionScores;
+  for (const kind of GAP_KINDS) {
+    const probability = value[kind];
+    if (typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) return null;
+    scores[kind] = probability;
+  }
+  return scores;
+}
+
+function readScoring(value: unknown): ExplainBackScoring | null {
+  if (!record(value)) return null;
+  if (value.status === "unavailable") {
+    return typeof value.reason === "string" && isReady(value.reason) ? { status: "unavailable", reason: value.reason } : null;
+  }
+  if (value.status !== "ok") return null;
+  const criteria = readCriterionScores(value.criteria);
+  if (!criteria || !record(value.fix)) return null;
+  const { criterion, probability, wording } = value.fix;
+  if (!isGapKind(criterion) || typeof probability !== "number" || !Number.isFinite(probability) || probability < 0 || probability > 1) return null;
+  if (typeof wording !== "string" || !isReady(wording)) return null;
+  return { status: "ok", criteria, fix: { criterion, probability, wording } };
+}
+
 /** Validate a saved or model-produced result. Null means unreadable feedback. An empty reconstruction is valid: a fragmentary explanation can establish nothing. */
 export function readExplainBackResult(value: unknown): ExplainBackResult | null {
   if (!record(value) || value.version !== RESULT_VERSION || typeof value.reconstruction !== "string" || !Array.isArray(value.gaps)) return null;
@@ -122,5 +158,9 @@ export function readExplainBackResult(value: unknown): ExplainBackResult | null 
     if (!gap) return null;
     gaps.push(gap);
   }
-  return { version: RESULT_VERSION, reconstruction: value.reconstruction, gaps };
+  const scoring = value.scoring === undefined ? undefined : readScoring(value.scoring);
+  if (value.scoring !== undefined && !scoring) return null;
+  const result: ExplainBackResult = { version: RESULT_VERSION, reconstruction: value.reconstruction, gaps };
+  if (scoring) result.scoring = scoring;
+  return result;
 }

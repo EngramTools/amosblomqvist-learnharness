@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { after, test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   ChatRecord,
@@ -51,6 +54,15 @@ const gradedPayload = {
   reconstruction: "An even number is 2k, and its square is 4k².",
   gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
 };
+const noKeyScoring = {
+  status: "unavailable" as const,
+  reason: "No TypeSafe API key is configured, so criterion scoring is unavailable.",
+};
+const temporaryDirectories: string[] = [];
+
+after(() => {
+  for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
+});
 
 function gradingContext(signal = new AbortController().signal): PluginQuestionGradingContext<ExplainBackPayload, ExplainBackAnswer> {
   return {
@@ -71,7 +83,13 @@ function fixture(options: {
 } = {}) {
   let definition: PluginQuestionTypeDefinition | undefined;
   const requests: PluginInferenceRequest[] = [];
+  const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "explain-back-"));
+  temporaryDirectories.push(dataDirectory);
   const cleanup = activate({
+    dataDirectory,
+    signal: new AbortController().signal,
+    events: { emit() {} },
+    handle() { return () => {}; },
     inference: {
       catalog: async () => options.catalog ?? catalog(),
       complete: async (request: PluginInferenceRequest) => {
@@ -94,7 +112,7 @@ test("grades through the session model and returns the literal reconstruction an
   const f = fixture({ session });
   const result = await f.grade(gradingContext());
 
-  assert.deepEqual(result, gradedPayload);
+  assert.deepEqual(result, { ...gradedPayload, scoring: noKeyScoring });
   assert.equal(f.requests.length, 1);
   const request = f.requests[0]!;
   assert.deepEqual(request.model, { provider: "test", id: "session-model", thinkingLevel: "high" });
@@ -129,7 +147,7 @@ test("an empty reconstruction with a missing-step gap is a valid result, not a g
   const f = fixture({ complete: async () => reply(JSON.stringify({ version: 1, reconstruction: "", gaps: [gap] })) });
   const context = gradingContext();
   const result = await f.grade({ ...context, answer: { text: "Something about evens." } });
-  assert.deepEqual(result, { version: 1, reconstruction: "", gaps: [gap] });
+  assert.deepEqual(result, { version: 1, reconstruction: "", gaps: [gap], scoring: noKeyScoring });
   assert.match(f.requests[0]!.context.systemPrompt!, /establish nothing, return an empty reconstruction/i);
   f.cleanup();
 });
@@ -142,7 +160,7 @@ test("falls back to the strong-slot default when the session has no model overri
 
 test("accepts a fenced JSON reply and rejects unreadable or invalid results", async () => {
   const fenced = fixture({ complete: async () => reply("```json\n" + JSON.stringify(gradedPayload) + "\n```") });
-  assert.deepEqual(await fenced.grade(gradingContext()), gradedPayload);
+  assert.deepEqual(await fenced.grade(gradingContext()), { ...gradedPayload, scoring: noKeyScoring });
 
   const invalidKind = fixture({ complete: async () => reply(JSON.stringify({ ...gradedPayload, gaps: [{ kind: "missing premise", detail: "Something" }] })) });
   await assert.rejects(invalidKind.grade(gradingContext()), /invalid result/i);
