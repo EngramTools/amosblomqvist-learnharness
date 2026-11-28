@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -293,10 +293,12 @@ export function usePluginQuestionDictationTarget(append: (text: string) => void 
 export function useDictationTarget(append: (text: string) => void, claimed: boolean) {
 	useEffect(() => {
 		if (!claimed) return;
+		// A plain claimant owns no speech receiver: claiming drops the previous
+		// claimant's, so releasing has nothing left to clear.
 		questionTarget = append;
 		questionTargetSpeech = null;
 		return () => {
-			if (questionTarget === append) { questionTarget = null; questionTargetSpeech = null; }
+			if (questionTarget === append) questionTarget = null;
 		};
 	}, [append, claimed]);
 }
@@ -359,6 +361,588 @@ export type Dictation = {
 	clearError: () => void;
 };
 
+type Ref<T> = { current: T };
+
+/** A run's failed transcript delivery, kept so a later finish() can report it. */
+type Failure = { error: unknown };
+
+/** The transcript of the live run (owner round 2: finals land here during the
+ *  run and flush into the target once, at teardown). Mutable by design: one
+ *  object per hook, reset at every start. */
+type Transcript = {
+	/** The deferred finals, in order. */
+	buffer: string[];
+	/** Word timings of every final, in final order (opt-in delivery). Only
+	 *  opted-in runs fill it — no extra retention on the default path. */
+	words: DictatedWord[];
+	/** The live run's `{text, words}` receiver, fixed at start; the URL and
+	 *  delivery shape key off it. Undefined by default — every unchanged
+	 *  target keeps text-only. */
+	speech: DictationDestination["appendSpeech"];
+	/** The resolved language of the live run, captured at start so the flush
+	 *  can attach it to the opted-in `{text, words}` delivery. */
+	language: DictationLanguage | undefined;
+};
+
+/** Live capture machinery (non-render values). The MediaStream tracks stop and
+ *  the per-run nodes disconnect on teardown; the socket is recreated per run;
+ *  the AudioContext is app-lifetime (mitigation C). */
+type CaptureState = {
+	ws: WebSocket | null;
+	stream: MediaStream | null;
+	/** Per-run graph nodes — the CONTEXT outlives runs (mitigation C). */
+	source: MediaStreamAudioSourceNode | null;
+	worklet: AudioWorkletNode | null;
+	/** Frames captured before the socket is OPEN (mitigation A): flushed in
+	 *  order on open; capped at MAX_PENDING_FRAMES with the oldest dropped;
+	 *  cleared at teardown so a dead run's audio can't leak into the next. */
+	pending: ArrayBuffer[];
+	safety: ReturnType<typeof setTimeout> | null;
+	reconnects: number;
+};
+
+/** How a finished run reaches the callers waiting on it. */
+type Settlement = {
+	/** Resolvers waiting for the run to fully end (finish(), owner
+	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
+	waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
+	failure: Failure | null;
+	/** An asynchronous transcript delivery is still in flight. */
+	pending: boolean;
+};
+
+type RunState = {
+	/** Stale-handler guard (dictate pattern). */
+	gen: number;
+	destination: DictationDestination | null;
+	transcript: Transcript;
+	capture: CaptureState;
+	settlement: Settlement;
+};
+
+/** Everything the run hooks share that is not run state: identity, the
+ *  render-visible setters, and the always-fresh inputs. */
+type RunIo = {
+	owner: symbol;
+	primary: boolean;
+	phaseRef: Ref<DictationPhase>;
+	/** Fresh fallback for the next start; a live run retains its own target. */
+	appendRef: Ref<(text: string) => void>;
+	disabledRef: Ref<boolean>;
+	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
+	levelRef: Ref<number>;
+	setPhase: (next: DictationPhase) => void;
+	setError: (message: string | null) => void;
+	setDestinationId: (id: string) => void;
+};
+
+/** Frames kept while the socket is not OPEN (≈32s of audio). */
+const MAX_PENDING_FRAMES = 256;
+
+function newRunState(): RunState {
+	return {
+		gen: 0,
+		destination: null,
+		transcript: { buffer: [], words: [], speech: undefined, language: undefined },
+		capture: { ws: null, stream: null, source: null, worklet: null, pending: [], safety: null, reconnects: 0 },
+		settlement: { waiters: [], failure: null, pending: false },
+	};
+}
+
+function useLatest<T>(value: T): Ref<T> {
+	const ref = useRef(value);
+	ref.current = value;
+	return ref;
+}
+
+/** Fresh run, fresh transcript; the opt-in receiver is read once per run. */
+function resetTranscript(t: Transcript, speech: DictationDestination["appendSpeech"]): void {
+	t.buffer = [];
+	t.words = [];
+	t.speech = speech;
+	t.language = undefined; // resolved once the preference lands
+}
+
+function discardTranscript(t: Transcript): void {
+	t.buffer = [];
+	t.words = [];
+}
+
+/** Flush into this run's fixed destination. Called exactly once at cleanup;
+ *  the buffer clears itself so double-cleanup is a no-op. */
+function flushTranscript(t: Transcript, destination: DictationDestination): unknown {
+	if (t.buffer.length === 0) return;
+	const text = t.buffer.join(" ");
+	const words = t.words;
+	discardTranscript(t);
+	return t.speech ? t.speech({ text, words, ...(t.language ? { language: t.language } : {}) }) : destination.append(text);
+}
+
+type DeepgramMessage = {
+	type?: string;
+	is_final?: boolean;
+	channel?: { alternatives?: Array<{ transcript?: string; words?: readonly DeepgramWord[] }> };
+};
+
+function parseMessage(data: string): DeepgramMessage | null {
+	try {
+		return JSON.parse(data) as DeepgramMessage | null;
+	} catch {
+		return null;
+	}
+}
+
+/** Only finals stream (interim_results=false). DEFERRED (owner round 2): they
+ *  buffer here and reach the input once, at teardown — the meter is the only
+ *  live feedback. */
+function ingestMessage(t: Transcript, data: string): void {
+	const msg = parseMessage(data);
+	if (msg?.type !== "Results" || !msg.is_final) return;
+	const alternative = msg.channel?.alternatives?.[0];
+	if (!alternative?.transcript) return;
+	t.buffer.push(alternative.transcript);
+	t.words.push(...finalWords(t.speech, alternative));
+}
+
+/** Mic dies FIRST — no more audio enqueues (dictate pattern). The per-run
+ *  nodes die with it; the AudioContext stays (mitigation C). */
+function stopMic(c: CaptureState): void {
+	for (const track of c.stream?.getTracks() ?? []) track.stop();
+	c.stream = null;
+	c.source?.disconnect();
+	c.source = null;
+	c.worklet?.disconnect();
+	c.worklet = null;
+}
+
+function isLiveSocket(ws: WebSocket): boolean {
+	return ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING;
+}
+
+function closeSocket(c: CaptureState): void {
+	const ws = c.ws;
+	c.ws = null;
+	if (!ws || !isLiveSocket(ws)) return;
+	try {
+		ws.close();
+	} catch {}
+}
+
+function releaseCapture(c: CaptureState): void {
+	if (c.safety) {
+		clearTimeout(c.safety);
+		c.safety = null;
+	}
+	c.pending = [];
+	stopMic(c);
+	closeSocket(c);
+}
+
+/** Mitigation A: everything captured during the handshake (or a reconnect
+ *  gap) goes out now, in order — Deepgram accepts faster-than-realtime sends. */
+function sendPendingAudio(c: CaptureState, ws: WebSocket): void {
+	for (const frame of c.pending) ws.send(frame);
+	c.pending = [];
+}
+
+/** Send when the socket is open; otherwise (handshake or reconnect gap) queue,
+ *  capped — the open handler flushes in order. */
+function sendOrQueueAudio(c: CaptureState, buffer: ArrayBuffer): void {
+	if (c.ws && c.ws.readyState === WebSocket.OPEN) {
+		c.ws.send(buffer);
+		return;
+	}
+	c.pending.push(buffer);
+	if (c.pending.length > MAX_PENDING_FRAMES) c.pending.shift();
+}
+
+/** Route one capture-worklet message for `gen`: levels always update; audio
+ *  goes out or queues. A message from a dead run is ignored. */
+function routeCaptureMessage(run: RunState, levelRef: Ref<number>, gen: number, data: unknown): void {
+	if (gen !== run.gen) return;
+	const msg = data as { type: string; rms?: number; buffer?: ArrayBuffer };
+	if (msg.type === "level") levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
+	else if (msg.type === "audio" && msg.buffer) sendOrQueueAudio(run.capture, msg.buffer);
+}
+
+/** Wire the capture worklet to the run. Resolves false when the run went
+ *  stale while the shared graph was warming up. */
+async function attachCaptureGraph(c: CaptureState, stream: MediaStream, isStale: () => boolean, onMessage: (data: unknown) => void): Promise<boolean> {
+	// Mitigation C: app-lifetime context + memoized worklet module — per-run
+	// costs (context creation, module fetch) are gone.
+	const { ctx, module } = ensureAudioGraph();
+	await module;
+	if (ctx.state === "suspended") await ctx.resume();
+	if (isStale()) return false;
+
+	const worklet = new AudioWorkletNode(ctx, "pcm-capture");
+	c.worklet = worklet;
+	worklet.port.onmessage = (e) => onMessage(e.data);
+	const source = ctx.createMediaStreamSource(stream);
+	c.source = source;
+	source.connect(worklet);
+	// Pull the graph with silence out (the worklet writes no output) —
+	// an unconnected worklet node is never clocked.
+	worklet.connect(ctx.destination);
+	return true;
+}
+
+const MIC_DENIED_ERRORS = new Set(["NotAllowedError", "SecurityError"]);
+
+function micErrorMessage(e: unknown): string {
+	if (e instanceof DOMException && MIC_DENIED_ERRORS.has(e.name)) return "Microphone permission denied";
+	return e instanceof Error ? e.message : "mic unavailable";
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+	return !!value && typeof (value as PromiseLike<unknown>).then === "function";
+}
+
+/** Flush the transcript into the run's destination. A second cleanup
+ *  (cancel/dispose) cannot turn an unfinished async append into a successful
+ *  finish: that would send the old draft. */
+function flushRun(run: RunState, fallback: (text: string) => void): { appended: unknown; failure: Failure | null } {
+	const { settlement } = run;
+	let failure: Failure | null = settlement.pending
+		? { error: new DOMException("Dictation transcript delivery canceled", "AbortError") }
+		: null;
+	settlement.pending = false;
+	let appended: unknown;
+	try {
+		appended = flushTranscript(run.transcript, run.destination ?? { id: "main", append: fallback }); // exactly one append, after the final transcript
+	} catch (error) {
+		failure = { error };
+	}
+	return { appended, failure };
+}
+
+/** The run is over: release the window-wide owner, go idle, settle waiters. */
+function settleRun(settlement: Settlement, io: RunIo, failed: Failure | null, warmNext: boolean): void {
+	settlement.pending = false;
+	settlement.failure = failed;
+	if (failed) io.setError(failed.error instanceof Error ? failed.error.message : "Dictation transcript could not be applied");
+	if (recordingOwner === io.owner) {
+		recordingOwner = null;
+		recordingTarget = null;
+		setDictationActive(false);
+	}
+	io.setPhase("idle");
+	// A plugin's async onTranscript is part of finishing, not a
+	// fire-and-forget notification: send must see its controlled text.
+	for (const waiter of settlement.waiters.splice(0)) {
+		if (failed) waiter.reject(failed.error);
+		else waiter.resolve();
+	}
+	if (warmNext) warmTokens.refresh();
+}
+
+/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
+function cleanupRun(run: RunState, io: RunIo, warmNext: boolean): void {
+	const endGen = ++run.gen;
+	const { appended, failure } = flushRun(run, io.appendRef.current);
+	releaseCapture(run.capture);
+	const complete = (failed: Failure | null) => {
+		if (endGen === run.gen) settleRun(run.settlement, io, failed, warmNext);
+	};
+	if (!isThenable(appended)) {
+		complete(failure);
+		return;
+	}
+	run.settlement.pending = true;
+	io.setPhase("stopping");
+	// Both branches consume the promise, including stop-without-finish.
+	void Promise.resolve(appended).then(() => complete(null), (error: unknown) => complete({ error }));
+}
+
+type Cleanup = (warmNext?: boolean) => void;
+
+/** A run's state, its shared io and its teardown, bound together for the
+ *  functions that drive a live run. */
+type RunCtx = { run: RunState; io: RunIo; cleanup: Cleanup };
+
+function useRunCleanup(run: RunState, io: RunIo): Cleanup {
+	return useCallback((warmNext = true) => cleanupRun(run, io, warmNext), [run, io]);
+}
+
+/** ONE reconnect with a fresh token (the research pass: resume is our job, no
+ *  SDK to lean on) after an abnormal close mid-run. */
+function reconnectSocket(ctx: RunCtx, gen: number, code: number, language: DictationLanguage): void {
+	const { run, io, cleanup } = ctx;
+	if (run.capture.reconnects >= 1) {
+		io.setError(`Deepgram connection lost (${code})`);
+		cleanup();
+		return;
+	}
+	run.capture.reconnects++;
+	mintFreshToken() // always FRESH — a stale warm token is the likely culprit
+		.then((token) => {
+			if (gen === run.gen) openSocket(ctx, gen, token, language);
+		})
+		.catch(() => {
+			if (gen !== run.gen) return;
+			io.setError("Deepgram reconnect failed");
+			cleanup();
+		});
+}
+
+/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
+function openSocket(ctx: RunCtx, gen: number, token: string, language: DictationLanguage): void {
+	const { run, io, cleanup } = ctx;
+	// Minted JWTs authenticate via the "bearer" subprotocol — ["token",
+	// jwt] is rejected at the handshake (verified live; "token" is for
+	// raw API keys only, as in the owner's pi dictate extension).
+	// deepgramListenUrl keeps filler_words English-only.
+	const ws = new WebSocket(deepgramListenUrl(language, { fillerWords: !!run.transcript.speech }), ["bearer", token]);
+	run.capture.ws = ws;
+	ws.addEventListener("open", () => {
+		if (gen !== run.gen) return;
+		sendPendingAudio(run.capture, ws);
+		io.setPhase("recording");
+	});
+	ws.addEventListener("message", (ev) => {
+		if (gen === run.gen) ingestMessage(run.transcript, ev.data as string);
+	});
+	ws.addEventListener("close", (ev) => {
+		if (gen !== run.gen) return;
+		// Code 1000 is our own CloseStream landing: finalize now — the stop
+		// path's safety net stays as the no-close backstop only.
+		if (ev.code === 1000) cleanup();
+		else reconnectSocket(ctx, gen, ev.code, language);
+	});
+}
+
+/** Where the run delivers when no explicit destination was given. */
+function defaultTarget(io: RunIo): DictationDestination {
+	const append = io.primary ? questionTarget ?? io.appendRef.current : (text: string) => io.appendRef.current(text);
+	return { id: "main", append };
+}
+
+/** Opt-in is read once per run: an explicit destination carries its own
+ *  receiver; the default question target carries the plugin editor's.
+ *  The core owns the language gate: filler_words is requested for
+ *  monolingual English only, and word timings are kept for any language. */
+function runSpeech(destination: DictationDestination | undefined, primary: boolean): DictationDestination["appendSpeech"] {
+	if (destination) return destination.appendSpeech;
+	return primary ? questionTargetSpeech ?? undefined : undefined;
+}
+
+/** Synchronously claim the window-wide owner and reset the run, before any
+ *  settings/mic/token await. Returns the run's generation. */
+function beginRun(run: RunState, io: RunIo, destination?: DictationDestination): number {
+	const target = destination ?? defaultTarget(io);
+	run.destination = target;
+	resetTranscript(run.transcript, runSpeech(destination, io.primary));
+	io.setDestinationId(target.id);
+	recordingOwner = io.owner;
+	recordingTarget = target.append;
+	setDictationActive(true);
+	io.setError(null);
+	run.settlement.failure = null;
+	io.setPhase("connecting");
+	run.capture.reconnects = 0;
+	run.capture.pending = []; // fresh run, fresh queue (mitigation A)
+	return ++run.gen;
+}
+
+/** A failed start step ends its run here; a stale one was already ended elsewhere. */
+function failStart({ run, io, cleanup }: RunCtx, gen: number, message: string): void {
+	if (gen !== run.gen) return;
+	io.setError(message);
+	cleanup();
+}
+
+function errorText(e: unknown, fallback: string): string {
+	return e instanceof Error ? e.message : fallback;
+}
+
+/** Open the mic and wire the capture graph. The mic is the long pole
+ *  (macOS HAL + APM init) and gates everything — the token runs
+ *  concurrently with it. 127.0.0.1 is a secure context, so getUserMedia
+ *  works without TLS; macOS TCC prompts on first use. */
+async function startCapture(ctx: RunCtx, gen: number): Promise<boolean> {
+	const { run, io } = ctx;
+	const isStale = () => gen !== run.gen;
+	try {
+		const stream = await navigator.mediaDevices.getUserMedia({
+			audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+		});
+		if (isStale()) {
+			for (const track of stream.getTracks()) track.stop();
+			return false;
+		}
+		run.capture.stream = stream;
+		const attached = await attachCaptureGraph(run.capture, stream, isStale, (data) => routeCaptureMessage(run, io.levelRef, gen, data));
+		return attached && !isStale();
+	} catch (e) {
+		failStart(ctx, gen, micErrorMessage(e));
+		return false;
+	}
+}
+
+/** Await one start step; null ends the start (failed, or its run went stale). */
+async function settleStep<T>(ctx: RunCtx, gen: number, step: Promise<T>, failure: string): Promise<T | null> {
+	try {
+		const value = await step;
+		return gen === ctx.run.gen ? value : null;
+	} catch (e) {
+		failStart(ctx, gen, errorText(e, failure));
+		return null;
+	}
+}
+
+async function startRun(ctx: RunCtx, getLanguage: () => Promise<DictationLanguage>, destination?: DictationDestination): Promise<void> {
+	const { run, io } = ctx;
+	if (io.disabledRef.current || io.phaseRef.current !== "idle") return;
+	if (recordingOwner !== null && recordingOwner !== io.owner) {
+		io.setError(DICTATION_ACTIVE_ELSEWHERE);
+		return;
+	}
+	const gen = beginRun(run, io, destination);
+	const language = await settleStep(ctx, gen, getLanguage(), "Dictation language unavailable");
+	if (language === null) return;
+	run.transcript.language = language;
+
+	// Mitigation D: the warm token (pre-minted at mount / after the last
+	// run) resolves ~instantly; a cold/keyless mint surfaces below.
+	const tokenPromise = warmTokens.mint();
+	tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
+	if (!(await startCapture(ctx, gen))) return;
+	const token = await settleStep(ctx, gen, tokenPromise, "token unavailable");
+	if (token === null) return;
+	// Mitigation B: the handshake fires the moment the graph is live,
+	// overlapping any remaining token wait — mic-gated, never before it.
+	openSocket(ctx, gen, token, language);
+}
+
+function useRunStart(ctx: RunCtx) {
+	const { getLanguage } = useDictationLanguage();
+	return useCallback((destination?: DictationDestination) => startRun(ctx, getLanguage, destination), [ctx, getLanguage]);
+}
+
+const isActivePhase = (io: RunIo) => io.phaseRef.current === "recording" || io.phaseRef.current === "connecting";
+
+function stopRun(run: RunState, io: RunIo, cleanup: Cleanup): void {
+	const gen = run.gen;
+	if (!isActivePhase(io)) return;
+	io.setPhase("stopping");
+	stopMic(run.capture);
+	const ws = run.capture.ws;
+	if (!ws || ws.readyState !== WebSocket.OPEN) {
+		cleanup();
+		return;
+	}
+	try {
+		ws.send(JSON.stringify({ type: "CloseStream" }));
+	} catch {
+		cleanup();
+		return;
+	}
+	// Deepgram flushes remaining finals then closes; if it never
+	// does, the safety net ends the run anyway (dictate pattern).
+	run.capture.safety = setTimeout(() => {
+		if (gen === run.gen) cleanup();
+	}, 3000);
+}
+
+function cancelRun(run: RunState, io: RunIo, cleanup: Cleanup): void {
+	if (io.phaseRef.current === "idle") return;
+	// Discard first, teardown second — cleanup() flushes, and the now-empty
+	// buffer makes that flush a no-op. Also kills a "stopping" run: the
+	// flush already underway is abandoned (its timer is cleared inside).
+	discardTranscript(run.transcript);
+	cleanup();
+}
+
+/** FINISH, THEN CONTINUE: resolve once the live run has fully ended. */
+function finishRun(run: RunState, io: RunIo, stop: () => void): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (io.phaseRef.current === "idle") {
+			if (run.settlement.failure) reject(run.settlement.failure.error);
+			else resolve();
+			return;
+		}
+		run.settlement.waiters.push({ resolve, reject });
+		// "stopping" is already ending — the waiter just rides to cleanup.
+		if (isActivePhase(io)) stop();
+	});
+}
+
+function useRunControls({ run, io, cleanup }: RunCtx, start: (destination?: DictationDestination) => Promise<void>) {
+	const stop = useCallback(() => stopRun(run, io, cleanup), [run, io, cleanup]);
+	const cancel = useCallback(() => cancelRun(run, io, cleanup), [run, io, cleanup]);
+	const finishCurrent = useCallback(() => finishRun(run, io, stop), [run, io, stop]);
+	const finishFor = useCallback((id: string) => run.destination?.id === id ? finishCurrent() : Promise.resolve(), [run, finishCurrent]);
+	// A main submission must not stop or wait for side-input recording.
+	const finish = useCallback(() => finishFor("main"), [finishFor]);
+	const toggleFor = useCallback((destination?: DictationDestination) => {
+		if (io.phaseRef.current === "idle") void start(destination);
+		else stop();
+		// Focus chooses where to START. An active run always stops into its
+		// original destination, even after focus moves to a different field.
+	}, [io, start, stop]);
+	const toggle = useCallback(() => toggleFor(), [toggleFor]);
+	return { stop, cancel, finish, finishFor, toggleFor, toggle };
+}
+
+/** The composer is the fallback target of every primary hook. */
+function useComposerTarget(primary: boolean, appendRef: Ref<(text: string) => void>) {
+	useEffect(() => {
+		if (!primary) return;
+		const target = (text: string) => appendRef.current(text);
+		composerTarget = target;
+		return () => {
+			if (composerTarget === target) composerTarget = null;
+		};
+	}, [primary, appendRef]);
+}
+
+/** Render state plus the always-fresh inputs every run hook reads. */
+function useRunIo(primary: boolean, append: (text: string) => void, disabled: boolean) {
+	const owner = useRef(Symbol("dictation")).current;
+	const [phase, setPhaseState] = useState<DictationPhase>("idle");
+	const [destinationId, setDestinationId] = useState("main");
+	const [error, setError] = useState<string | null>(null);
+	const phaseRef = useRef<DictationPhase>("idle");
+	const levelRef = useRef(0);
+	const appendRef = useLatest(append);
+	const disabledRef = useLatest(disabled);
+	const io = useMemo<RunIo>(() => ({
+		owner, primary, phaseRef, appendRef, disabledRef, levelRef, setError, setDestinationId,
+		setPhase: (next) => {
+			phaseRef.current = next;
+			setPhaseState(next);
+		},
+	}), [owner, primary, appendRef, disabledRef]);
+	return { io, phase, destinationId, error };
+}
+
+/** Page-lifetime registrations: the finisher the sibling subtrees (the pending
+ *  question's dock) call, the mount warm-up with its navigation teardown, and
+ *  the shared keyboard controller. */
+function useDictationLifecycle({ run, io, cleanup }: RunCtx, controls: ReturnType<typeof useRunControls>) {
+	const { finish, toggle, cancel } = controls;
+	useEffect(() => {
+		if (!io.primary) return;
+		dictationFinisher = finish;
+		return () => {
+			if (dictationFinisher === finish) dictationFinisher = null;
+		};
+	}, [finish, io.primary]);
+	// One shared pair of shortcut listeners, regardless of widget count:
+	// focused plugin control first, otherwise core fallback; Esc always
+	// cancels the actual recording owner rather than the focused widget.
+	useEffect(() => {
+		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
+		return () => {
+			// Navigation cancels capture: invalidate every pending await before
+			// releasing resources, and never append into a different page's input.
+			discardTranscript(run.transcript);
+			cleanup(false);
+		};
+	}, [run, cleanup]);
+	useEffect(() => registerController(io.owner, { primary: io.primary, toggle, cancel }), [io.owner, io.primary, toggle, cancel]);
+}
+
 /**
  * Shared capture engine with one synchronous window-wide recording owner.
  * Each primary run captures its main/question or explicit side destination.
@@ -372,437 +956,28 @@ export function useDictation({ append, destination = "primary", disabled = false
 	disabled?: boolean;
 }): Dictation {
 	const primary = destination === "primary";
-	const owner = useRef(Symbol("dictation")).current;
-	const { getLanguage } = useDictationLanguage();
-	const [phase, setPhaseState] = useState<DictationPhase>("idle");
-	const phaseRef = useRef<DictationPhase>("idle");
-	const setPhase = useCallback((next: DictationPhase) => {
-		phaseRef.current = next;
-		setPhaseState(next);
-	}, []);
-	const [destinationId, setDestinationId] = useState("main");
-	const destinationRef = useRef<DictationDestination | null>(null);
-	const disabledRef = useRef(disabled);
-	disabledRef.current = disabled;
-	const [error, setError] = useState<string | null>(null);
-	/** Latest RMS from the worklet — the meter samples this (dictate pattern). */
-	const levelRef = useRef(0);
-	/** Fresh fallback for the next start; a live run retains its own target. */
-	const appendRef = useRef(append);
-	appendRef.current = append;
-	useEffect(() => {
-		if (!primary) return;
-		const target = (text: string) => appendRef.current(text);
-		composerTarget = target;
-		return () => {
-			if (composerTarget === target) composerTarget = null;
-		};
-	}, [primary]);
-
-	// Live machinery (non-render values). The MediaStream tracks stop and
-	// the per-run nodes disconnect on teardown; the socket is recreated per
-	// run; the AudioContext is app-lifetime (mitigation C).
-	const wsRef = useRef<WebSocket | null>(null);
-	const streamRef = useRef<MediaStream | null>(null);
-	/** Per-run graph nodes — the CONTEXT outlives runs (mitigation C). */
-	const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-	const workletRef = useRef<AudioWorkletNode | null>(null);
-	/** Frames captured before the socket is OPEN (mitigation A): flushed in
-	 *  order on open; capped at 256 frames (≈32s) with the oldest dropped;
-	 *  cleared at teardown so a dead run's audio can't leak into the next. */
-	const pendingRef = useRef<ArrayBuffer[]>([]);
-	const genRef = useRef(0); // stale-handler guard (dictate pattern)
-	const safetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const reconnectsRef = useRef(0);
-	/** The deferred transcript (owner round 2): finals land here during the
-	 *  run and flush into the primary input once, at teardown. */
-	const bufferRef = useRef<string[]>([]);
-	/** Word timings of every final, in final order (opt-in delivery). Only
-	 *  opted-in runs fill it — no extra retention on the default path. */
-	const wordsRef = useRef<DictatedWord[]>([]);
-	/** The live run's `{text, words}` receiver, fixed at start; the URL and
-	 *  delivery shape key off it. Undefined by default — every unchanged
-	 *  target keeps text-only. */
-	const speechRef = useRef<DictationDestination["appendSpeech"]>(undefined);
-	/** The resolved language of the live run, captured at start so the flush
-	 *  can attach it to the opted-in `{text, words}` delivery. */
-	const languageRef = useRef<DictationLanguage | undefined>(undefined);
-	/** Resolvers waiting for the run to fully end (finish(), owner
-	 *  2026-10-01): released by cleanup() — every terminal path runs it. */
-	const waitersRef = useRef<Array<{ resolve: () => void; reject: (error: unknown) => void }>>([]);
-	const appendFailureRef = useRef<{ error: unknown } | null>(null);
-	const appendPendingRef = useRef(false);
-
-	/** Flush into this run's fixed destination. Called exactly once at cleanup; the
-	 *  buffer clears itself so double-cleanup is a no-op. */
-	const flush = useCallback((language?: DictationLanguage): unknown => {
-		if (bufferRef.current.length === 0) return;
-		const text = bufferRef.current.join(" ");
-		bufferRef.current = [];
-		const destination = destinationRef.current ?? { id: "main", append: appendRef.current };
-		const words = wordsRef.current;
-		wordsRef.current = [];
-		return speechRef.current ? speechRef.current({ text, words, ...(language ? { language } : {}) }) : destination.append(text);
-	}, []);
-
-	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
-	const cleanup = useCallback((warmNext = true) => {
-		const endGen = ++genRef.current;
-		let appended: unknown;
-		// A second cleanup (cancel/dispose) cannot turn an unfinished async
-		// append into a successful finish: that would send the old draft.
-		let failure: { error: unknown } | null = appendPendingRef.current
-			? { error: new DOMException("Dictation transcript delivery canceled", "AbortError") }
-			: null;
-		appendPendingRef.current = false;
-		try {
-			appended = flush(languageRef.current); // exactly one append, after the final transcript
-		} catch (error) {
-			failure = { error };
-		}
-		if (safetyRef.current) {
-			clearTimeout(safetyRef.current);
-			safetyRef.current = null;
-		}
-		pendingRef.current = [];
-		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
-		streamRef.current = null;
-		sourceRef.current?.disconnect();
-		sourceRef.current = null;
-		workletRef.current?.disconnect();
-		workletRef.current = null;
-		// The AudioContext is app-lifetime (mitigation C) — nodes die, it stays.
-		const ws = wsRef.current;
-		wsRef.current = null;
-		const socketOpen = ws !== null && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING);
-		if (socketOpen) {
-			try {
-				ws.close();
-			} catch {}
-		}
-		const complete = (failed: { error: unknown } | null) => {
-			if (endGen !== genRef.current) return;
-			appendPendingRef.current = false;
-			appendFailureRef.current = failed;
-			if (failed) setError(failed.error instanceof Error ? failed.error.message : "Dictation transcript could not be applied");
-			if (recordingOwner === owner) {
-				recordingOwner = null;
-				recordingTarget = null;
-				setDictationActive(false);
-			}
-			setPhase("idle");
-			// A plugin's async onTranscript is part of finishing, not a
-			// fire-and-forget notification: send must see its controlled text.
-			for (const waiter of waitersRef.current.splice(0)) {
-				if (failed) waiter.reject(failed.error);
-				else waiter.resolve();
-			}
-			if (warmNext) warmTokens.refresh();
-		};
-		if (appended && typeof (appended as PromiseLike<unknown>).then === "function") {
-			appendPendingRef.current = true;
-			setPhase("stopping");
-			// Both branches consume the promise, including stop-without-finish.
-			void Promise.resolve(appended).then(() => complete(null), (error: unknown) => complete({ error }));
-		} else complete(failure);
-	}, [flush, owner, setPhase]);
-
-	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
-	const openSocket = useCallback(
-		(gen: number, token: string, language: DictationLanguage) => {
-			// Minted JWTs authenticate via the "bearer" subprotocol — ["token",
-			// jwt] is rejected at the handshake (verified live; "token" is for
-			// raw API keys only, as in the owner's pi dictate extension).
-			// deepgramListenUrl keeps filler_words English-only.
-			const ws = new WebSocket(deepgramListenUrl(language, { fillerWords: !!speechRef.current }), ["bearer", token]);
-			wsRef.current = ws;
-
-			ws.addEventListener("open", () => {
-				if (gen !== genRef.current) return;
-				// Mitigation A: everything captured during the handshake (or a
-				// reconnect gap) goes out now, in order — Deepgram accepts
-				// faster-than-realtime sends.
-				for (const frame of pendingRef.current) ws.send(frame);
-				pendingRef.current = [];
-				setPhase("recording");
-			});
-			ws.addEventListener("message", (ev) => {
-				if (gen !== genRef.current) return;
-				let msg: any;
-				try {
-					msg = JSON.parse(ev.data as string);
-				} catch {
-					return;
-				}
-				if (msg.type === "Results") {
-					const alternative = msg.channel?.alternatives?.[0];
-					const text: string | undefined = alternative?.transcript;
-					// Only finals stream (interim_results=false). DEFERRED (owner
-					// round 2): they buffer here and reach the input once, at
-					// teardown — the meter is the only live feedback.
-					if (msg.is_final && text) {
-						bufferRef.current.push(text);
-						wordsRef.current.push(...finalWords(speechRef.current, alternative));
-					}
-				}
-			});
-			ws.addEventListener("close", (ev) => {
-				if (gen !== genRef.current) return;
-				if (ev.code === 1000) {
-					// Our own CloseStream landing: finalize now — the stop path's
-					// safety net stays as the no-close backstop only.
-					cleanup();
-					return;
-				}
-				// Abnormal close mid-run: ONE reconnect with a fresh token (the
-				// research pass: resume is our job, no SDK to lean on).
-				if (reconnectsRef.current < 1) {
-					reconnectsRef.current++;
-					mintFreshToken() // always FRESH — a stale warm token is the likely culprit
-						.then((t) => {
-							if (gen === genRef.current) openSocket(gen, t, language);
-						})
-						.catch(() => {
-							if (gen === genRef.current) {
-								setError("Deepgram reconnect failed");
-								cleanup();
-							}
-						});
-				} else {
-					setError(`Deepgram connection lost (${ev.code})`);
-					cleanup();
-				}
-			});
-		},
-		[cleanup, setPhase],
-	);
-
-	/** Route one capture-worklet message for `gen`: levels always update; audio
-	 *  sends when the socket is open and queues (capped) while it is not. */
-	const handleCaptureMessage = useCallback((gen: number, data: unknown) => {
-		if (gen !== genRef.current) return;
-		const msg = data as { type: string; rms?: number; buffer?: ArrayBuffer };
-		if (msg.type === "level") {
-			levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
-			return;
-		}
-		if (msg.type !== "audio" || !msg.buffer) return;
-		const ws = wsRef.current;
-		if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer);
-		// Mitigation A: not OPEN yet (handshake or reconnect gap) —
-		// queue, capped; the open handler flushes in order.
-		else {
-			pendingRef.current.push(msg.buffer);
-			if (pendingRef.current.length > 256) pendingRef.current.shift();
-		}
-	}, []);
-
-	const start = useCallback(async (destination?: DictationDestination) => {
-		if (disabledRef.current || phaseRef.current !== "idle") return;
-		if (recordingOwner !== null && recordingOwner !== owner) {
-			setError(DICTATION_ACTIVE_ELSEWHERE);
-			return;
-		}
-		const target = destination ?? { id: "main", append: primary ? questionTarget ?? appendRef.current : (text: string) => appendRef.current(text) };
-		destinationRef.current = target;
-		// Opt-in is read once per run: an explicit destination carries its own
-		// receiver; the default question target carries the plugin editor's.
-		// The core owns the language gate: filler_words is requested for
-		// monolingual English only, and word timings are kept for any language.
-		speechRef.current = destination ? destination.appendSpeech : primary ? questionTargetSpeech ?? undefined : undefined;
-		setDestinationId(target.id);
-		recordingOwner = owner;
-		recordingTarget = target.append;
-		setDictationActive(true);
-		setError(null);
-		appendFailureRef.current = null;
-		setPhase("connecting");
-		reconnectsRef.current = 0;
-		bufferRef.current = []; // fresh run, fresh buffer (round 2)
-		wordsRef.current = []; // fresh run, fresh timings
-		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
-		languageRef.current = undefined; // resolved below, once the preference lands
-		const gen = ++genRef.current;
-		let language: DictationLanguage;
-		try {
-			language = await getLanguage();
-		} catch (e) {
-			if (gen !== genRef.current) return;
-			setError(e instanceof Error ? e.message : "Dictation language unavailable");
-			cleanup();
-			return;
-		}
-		if (gen !== genRef.current) return;
-		languageRef.current = language;
-
-		// Mitigation D: the warm token (pre-minted at mount / after the last
-		// run) resolves ~instantly; a cold/keyless mint surfaces below. The
-		// mic is the long pole (macOS HAL + APM init) and gates everything —
-		// the token runs concurrently with it. 127.0.0.1 is a secure
-		// context, so getUserMedia works without TLS; macOS TCC prompts on
-		// first use.
-		const tokenPromise = warmTokens.mint();
-		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
-		const micPromise = navigator.mediaDevices.getUserMedia({
-			audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-		});
-		let stream: MediaStream;
-		try {
-			stream = await micPromise;
-			if (gen !== genRef.current) {
-				for (const track of stream.getTracks()) track.stop();
-				return;
-			}
-			streamRef.current = stream;
-
-			// Mitigation C: app-lifetime context + memoized worklet module —
-			// per-run costs (context creation, module fetch) are gone.
-			const { ctx, module } = ensureAudioGraph();
-			await module;
-			if (ctx.state === "suspended") await ctx.resume();
-			if (gen !== genRef.current) return;
-
-			const worklet = new AudioWorkletNode(ctx, "pcm-capture");
-			workletRef.current = worklet;
-			worklet.port.onmessage = (e) => handleCaptureMessage(gen, e.data);
-			const source = ctx.createMediaStreamSource(stream);
-			sourceRef.current = source;
-			source.connect(worklet);
-			// Pull the graph with silence out (the worklet writes no output) —
-			// an unconnected worklet node is never clocked.
-			worklet.connect(ctx.destination);
-		} catch (e) {
-			if (gen !== genRef.current) return;
-			const msg =
-				e instanceof DOMException && (e.name === "NotAllowedError" || e.name === "SecurityError")
-					? "Microphone permission denied"
-					: e instanceof Error
-						? e.message
-						: "mic unavailable";
-			setError(msg);
-			cleanup();
-			return;
-		}
-		if (gen !== genRef.current) return;
-		let token: string;
-		try {
-			token = await tokenPromise;
-		} catch (e) {
-			if (gen !== genRef.current) return;
-			setError(e instanceof Error ? e.message : "token unavailable");
-			cleanup();
-			return;
-		}
-		if (gen !== genRef.current) return;
-		// Mitigation B: the handshake fires the moment the graph is live,
-		// overlapping any remaining token wait — mic-gated, never before it.
-		openSocket(gen, token, language);
-	}, [openSocket, cleanup, getLanguage, handleCaptureMessage, owner, primary, setPhase]);
-
-	const stop = useCallback(() => {
-		const gen = genRef.current;
-		if (phaseRef.current !== "recording" && phaseRef.current !== "connecting") return;
-		setPhase("stopping");
-
-		// Mic dies FIRST — no more audio enqueues (dictate pattern). The
-		// per-run nodes die with it; the AudioContext stays (mitigation C).
-		for (const track of streamRef.current?.getTracks() ?? []) track.stop();
-		streamRef.current = null;
-		sourceRef.current?.disconnect();
-		sourceRef.current = null;
-		workletRef.current?.disconnect();
-		workletRef.current = null;
-
-		const ws = wsRef.current;
-		if (ws && ws.readyState === WebSocket.OPEN) {
-			try {
-				ws.send(JSON.stringify({ type: "CloseStream" }));
-			} catch {
-				cleanup();
-				return;
-			}
-			// Deepgram flushes remaining finals then closes; if it never
-			// does, the safety net ends the run anyway (dictate pattern).
-			safetyRef.current = setTimeout(() => {
-				if (gen === genRef.current) cleanup();
-			}, 3000);
-		} else {
-			cleanup();
-		}
-	}, [cleanup, setPhase]);
-
-	const cancel = useCallback(() => {
-		if (phaseRef.current === "idle") return;
-		// Discard first, teardown second — cleanup() flushes, and the now-empty
-		// buffer makes that flush a no-op. Also kills a "stopping" run: the
-		// flush already underway is abandoned (its timer is cleared inside).
-		bufferRef.current = [];
-		wordsRef.current = [];
-		cleanup();
-	}, [cleanup]);
-
-	const finishCurrent = useCallback((): Promise<void> => {
-		return new Promise((resolve, reject) => {
-			if (phaseRef.current === "idle") {
-				if (appendFailureRef.current) reject(appendFailureRef.current.error);
-				else resolve();
-				return;
-			}
-			waitersRef.current.push({ resolve, reject });
-			// "stopping" is already ending — the waiter just rides to cleanup.
-			if (phaseRef.current === "recording" || phaseRef.current === "connecting") stop();
-		});
-	}, [stop]);
-	const finishFor = useCallback((id: string) => destinationRef.current?.id === id ? finishCurrent() : Promise.resolve(), [finishCurrent]);
-	// A main submission must not stop or wait for side-input recording.
-	const finish = useCallback(() => finishFor("main"), [finishFor]);
-
-	// Publish finish() for the sibling subtrees (the pending question's
-	// dock) — registered for as long as this page owns the hook.
-	useEffect(() => {
-		if (!primary) return;
-		dictationFinisher = finish;
-		return () => {
-			if (dictationFinisher === finish) dictationFinisher = null;
-		};
-	}, [finish, primary]);
-
-	const toggleFor = useCallback((destination?: DictationDestination) => {
-		if (phaseRef.current === "idle") void start(destination);
-		else if (phaseRef.current === "recording" || phaseRef.current === "connecting") stop();
-		// Focus chooses where to START. An active run always stops into its
-		// original destination, even after focus moves to a different field.
-	}, [start, stop]);
-	const toggle = useCallback(() => toggleFor(), [toggleFor]);
-
-	// One shared pair of shortcut listeners, regardless of widget count:
-	// focused plugin control first, otherwise core fallback; Esc always
-	// cancels the actual recording owner rather than the focused widget.
-	useEffect(() => {
-		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
-		return () => {
-			// Navigation cancels capture: invalidate every pending await before
-			// releasing resources, and never append into a different page's input.
-			bufferRef.current = [];
-			wordsRef.current = [];
-			cleanup(false);
-		};
-	}, [cleanup]);
-	useEffect(() => registerController(owner, { primary, toggle, cancel }), [owner, primary, toggle, cancel]);
+	const { io, phase, destinationId, error } = useRunIo(primary, append, disabled);
+	useComposerTarget(primary, io.appendRef);
+	const [run] = useState(newRunState);
+	const cleanup = useRunCleanup(run, io);
+	const ctx = useMemo<RunCtx>(() => ({ run, io, cleanup }), [run, io, cleanup]);
+	const start = useRunStart(ctx);
+	const controls = useRunControls(ctx, start);
+	useDictationLifecycle(ctx, controls);
 
 	return {
 		phase,
 		destinationId,
-		toggleFor,
-		finishFor,
+		toggleFor: controls.toggleFor,
+		finishFor: controls.finishFor,
 		error,
-		levelRef,
+		levelRef: io.levelRef,
 		active: phase !== "idle",
-		toggle,
-		stop,
-		finish,
-		cancel,
-		clearError: () => setError(null),
+		toggle: controls.toggle,
+		stop: controls.stop,
+		finish: controls.finish,
+		cancel: controls.cancel,
+		clearError: () => io.setError(null),
 	};
 }
 

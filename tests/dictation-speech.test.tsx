@@ -47,8 +47,9 @@ const openedUrls: string[] = [];
 class RecordingSocket extends Socket {
 	constructor(_url: string, protocols?: string[]) { super(); openedUrls.push(_url); void protocols; }
 }
-class AudioGraph { state = "running"; destination = {}; audioWorklet = { addModule: async () => {} }; createMediaStreamSource() { return { connect() {}, disconnect() {} }; } }
-class Worklet { port = {}; connect() {} disconnect() {} }
+class AudioGraph { state = "running"; destination = {}; audioWorklet = { addModule: async () => {} }; createMediaStreamSource = () => NODE; }
+const NODE = { connect: () => {}, disconnect: () => {} };
+class Worklet { port = {}; connect = NODE.connect; disconnect = NODE.disconnect; }
 let cleanup: (() => Promise<void>) | undefined;
 let restore: (() => void) | undefined;
 afterEach(async () => { await cleanup?.(); restore?.(); cleanup = undefined; restore = undefined; Socket.all = []; openedUrls.length = 0; });
@@ -151,7 +152,7 @@ async function fixture(options: { thinking?: boolean; wantsWords?: boolean; omit
 	cleanup = async () => { await act(async () => { root.unmount(); }); };
 	const f: SpeechFixture = {
 		state, dictation, draft, flags,
-		render: async () => { await act(async () => { rerender(); }); },
+		render: () => act(async () => rerender()),
 		socket: () => Socket.all.at(-1) as RecordingSocket,
 	};
 	return f;

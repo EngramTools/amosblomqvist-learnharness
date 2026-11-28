@@ -79,27 +79,30 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		fail, dispose,
 	};
 }
-export function createQuestionEditorLease(options: {
-	props: PluginQuestionEditorProps;
+type LeaseOptions<P> = {
+	props: P;
 	publish(state: PluginQuestionAnswerState): void;
 	changed(): void;
 	failed(): void;
-}) {
-	return createEditorLease<PluginQuestionEditorProps, PluginQuestionEditorHandle>({ ...options,
-		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }),
-		update: (handle, answer, active) => handle.update({ answer, active }),
+};
+/** The one lease shape both editors share: frozen props carrying the lease
+ *  signal and onChange, plus the kind-specific `update` payload. */
+function createFrozenPropsLease<P extends object, H extends EditorHandle>(
+	options: LeaseOptions<P>,
+	update: (handle: H, state: PluginQuestionAnswerState, active: boolean) => void,
+) {
+	return createEditorLease<P, H>({ ...options,
+		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }) as P,
+		update,
 	});
 }
-export function createProblemEditorLease(options: {
-	props: PluginProblemEditorProps;
-	publish(state: PluginQuestionAnswerState): void;
-	changed(): void;
-	failed(): void;
-}) {
-	return createEditorLease<PluginProblemEditorProps, PluginProblemEditorHandle>({ ...options,
-		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }),
-		update: (handle, submission, active) => handle.update({ submission, active }),
-	});
+export function createQuestionEditorLease(options: LeaseOptions<PluginQuestionEditorProps>) {
+	return createFrozenPropsLease<PluginQuestionEditorProps, PluginQuestionEditorHandle>(options,
+		(handle, answer, active) => handle.update({ answer, active }));
+}
+export function createProblemEditorLease(options: LeaseOptions<PluginProblemEditorProps>) {
+	return createFrozenPropsLease<PluginProblemEditorProps, PluginProblemEditorHandle>(options,
+		(handle, submission, active) => handle.update({ submission, active }));
 }
 export type QuestionEditorLease = ReturnType<typeof createQuestionEditorLease>;
 export type ProblemEditorLease = ReturnType<typeof createProblemEditorLease>;
