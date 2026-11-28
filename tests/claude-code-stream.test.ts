@@ -49,7 +49,9 @@ const FAKE_CLAUDE = fileURLToPath(new URL("./fixtures/claude-code/fake-claude.mj
 const FIXTURES = fileURLToPath(new URL("./fixtures/claude-code/", import.meta.url));
 const HOLD = JSON.stringify({ fake: "hold" });
 const REPLY = JSON.stringify({ fake: "reply" });
-const CLEANUP_TIMEOUT_MS = 2000;
+// Generous enough for a loaded CI box: process exit and temp-dir removal are
+// asynchronous after the stream settles, and the full suite runs many files.
+const CLEANUP_TIMEOUT_MS = 10_000;
 
 const SESSION_ID = "stream-test-chat";
 const READ_TOOL: Tool = { name: "read", description: "Read a file", parameters: { type: "object", properties: {} } };

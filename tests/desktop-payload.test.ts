@@ -67,7 +67,9 @@ function withPayload(test: (fixture: {
 		write(path.join(STANDALONE, "src", "agent", "prompts", "side-chat", "00-base.md"));
 		write(path.join(STANDALONE, "src", "agent", "prompts", "side-chat", "90-style.md"));
 		test({ root, write, run: () => spawnSync(process.execPath, [path.join(root, "scripts", "build-server.mjs")], {
-			cwd: root, encoding: "utf8", timeout: 10_000,
+			// The payload script is quick normally; under a loaded full-suite run
+			// its cold start can exceed 10s. A real failure still exits non-zero.
+			cwd: root, encoding: "utf8", timeout: 60_000,
 		}) });
 	} finally {
 		fs.rmSync(root, { recursive: true, force: true });
