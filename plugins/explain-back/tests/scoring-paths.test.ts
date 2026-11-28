@@ -229,6 +229,10 @@ test("trimming keeps at most two sentences and rejects blank wording", () => {
   assert.equal(trimToTwoSentences("One question? Two!"), "One question? Two!");
   assert.equal(trimToTwoSentences("No terminator at all"), "No terminator at all");
   assert.equal(trimToTwoSentences("   "), "");
+  assert.equal(
+    trimToTwoSentences("First, use 2.5 as the factor. Then define k. Finally restate."),
+    "First, use 2.5 as the factor. Then define k.",
+  );
   const model = { provider: "test", id: "default-model" };
   assert.throws(() => readFixWording("   ", model), /returned no fix wording/);
 });
@@ -297,8 +301,12 @@ test("a stored key survives reactivation, trimmed, and a key at the length cap i
 test("a corrupt settings file is a distinct activation error, not a missing key", () => {
   const directory = tempDirectory();
   fs.writeFileSync(path.join(directory, "settings.json"), "{not json");
-  assert.throws(() => fixtureWithDirectory(directory), /corrupt/i);
+  assert.throws(() => fixtureWithDirectory(directory), {
+    message: "the explain-back settings file is corrupt: it does not contain valid JSON.",
+  });
   fs.writeFileSync(path.join(directory, "settings.json"), "a bare string");
+  assert.throws(() => fixtureWithDirectory(directory), /corrupt/i);
+  fs.writeFileSync(path.join(directory, "settings.json"), "[]");
   assert.throws(() => fixtureWithDirectory(directory), /corrupt/i);
   fs.rmSync(path.join(directory, "settings.json"));
   const activated = fixtureWithDirectory(directory);
@@ -307,6 +315,26 @@ test("a corrupt settings file is a distinct activation error, not a missing key"
   } finally {
     activated.cleanup();
   }
+});
+
+test("a corrupt settings file never echoes its contents into the activation error", () => {
+  const directory = tempDirectory();
+  const secret = "sk-typesafe-secret-from-corrupt-file";
+  fs.writeFileSync(path.join(directory, "settings.json"), `{"typesafeApiKey": "${secret}"} trailing`);
+  assert.throws(() => fixtureWithDirectory(directory), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "the explain-back settings file is corrupt: it does not contain valid JSON.");
+    assert.equal(error.message.includes(secret), false);
+    return true;
+  });
+});
+
+test("an unreadable settings path is a read error, not a missing key or corrupt file", () => {
+  const directory = tempDirectory();
+  fs.mkdirSync(path.join(directory, "settings.json"));
+  assert.throws(() => fixtureWithDirectory(directory), {
+    message: "Could not read the explain-back settings file.",
+  });
 });
 
 function fixtureWithDirectory(directory: string) {

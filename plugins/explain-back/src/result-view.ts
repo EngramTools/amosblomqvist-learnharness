@@ -82,10 +82,12 @@ function mountCriterionScores(document: Document, container: HTMLElement, scorin
   const wording = scoring.fix.wording;
   if (wording !== undefined) fix.append(paragraph(document, "lh-explain-back__prose", wording));
   else {
+    const reason = scoring.fix.unavailableReason ?? "the wording model call failed";
+    const sentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
     fix.append(paragraph(
       document,
       "lh-explain-back__prose lh-explain-back__fix-wording-unavailable",
-      `Fix wording is unavailable: ${scoring.fix.unavailableReason ?? "the wording model call failed"}.`,
+      `Fix wording is unavailable: ${sentence}`,
     ));
   }
   container.append(fix);

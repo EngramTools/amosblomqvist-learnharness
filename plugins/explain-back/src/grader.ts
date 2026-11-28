@@ -314,7 +314,10 @@ export const MAX_FIX_WORDING_SENTENCES = 2;
 const MIN_FIX_WORDING_LENGTH = 1;
 
 export function trimToTwoSentences(text: string): string {
-  const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) ?? [];
+  // A terminator ends a sentence only at whitespace or the end of the text,
+  // so decimals (2.5) and abbreviations (i.e.) keep their prefix instead of
+  // matching a later sentence segment.
+  const sentences = text.split(/(?<=[.!?])(?=\s|$)/);
   const kept = sentences.slice(0, MAX_FIX_WORDING_SENTENCES).join("").trim();
   return kept.length >= MIN_FIX_WORDING_LENGTH ? kept : "";
 }

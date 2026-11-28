@@ -325,6 +325,7 @@ test("the fix-choice line names the criterion with a rounded percent, even when 
   assert.equal(container.querySelector("[data-fix-criterion]")?.getAttribute("data-fix-criterion"), "wrong order");
   assert.match(text, /Fix wording is unavailable/);
   assert.match(text, /could not write the fix wording\./);
+  assert.doesNotMatch(text, /\.\./);
   controller.abort();
   assert.equal(container.textContent, "");
 });

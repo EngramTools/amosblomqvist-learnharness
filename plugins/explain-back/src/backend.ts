@@ -37,7 +37,9 @@ function loadSettings(directory: string): Settings {
   } catch (error) {
     // A missing settings file is the first-run case: an absent key store means no key.
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return {};
-    throw new Error(`Could not read ${SETTINGS_FILE_DESCRIPTION}: ${(error as Error).message}`);
+    // Never interpolate the read failure: its message can quote the settings
+    // file (and therefore a stored key) into the activation error.
+    throw new Error(`Could not read ${SETTINGS_FILE_DESCRIPTION}.`);
   }
   const value: unknown = parseJson(raw);
   if (!record(value)) throw new Error(`${SETTINGS_FILE_DESCRIPTION} is corrupt: it does not contain a settings object.`);
@@ -57,8 +59,10 @@ function loadSettings(directory: string): Settings {
 function parseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`${SETTINGS_FILE_DESCRIPTION} is corrupt: ${(error as Error).message}`);
+  } catch {
+    // JSON.parse's message can quote the corrupt source, including a stored
+    // key; activation exposes only a generic corrupt-file message.
+    throw new Error(`${SETTINGS_FILE_DESCRIPTION} is corrupt: it does not contain valid JSON.`);
   }
 }
 
