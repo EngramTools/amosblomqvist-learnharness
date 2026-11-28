@@ -1,0 +1,274 @@
+import type { PluginFrontendContext } from "learnharness-plugin-api";
+import type { CoachLocale } from "./judge-types.ts";
+import { RECORDING_LIMIT_MS, startRecorder } from "./recorder.ts";
+
+type SettingsContext = Pick<PluginFrontendContext, "call" | "onNotification">;
+
+export type PublicSettings = {
+  configured: boolean;
+  region: string;
+  targetLanguage: CoachLocale;
+  firstLanguage: string;
+};
+
+export const SPEECH_KEY_LABEL = "Azure Speech key";
+export const SPEECH_KEY_DESCRIPTION = "Recorded clips are sent to Azure for pronunciation assessment. The key is stored in this plugin's data directory and is never shown in full.";
+export const REGION_LABEL = "Azure Speech region";
+export const TARGET_LANGUAGE_LABEL = "Target language";
+export const FIRST_LANGUAGE_LABEL = "Learner first language";
+
+export function readPublicSettings(value: unknown): PublicSettings {
+  if (!record(value) || typeof value.configured !== "boolean" || typeof value.region !== "string"
+    || (value.targetLanguage !== "en-US" && value.targetLanguage !== "zh-CN") || typeof value.firstLanguage !== "string") {
+    throw new Error("Language coach settings are unavailable.");
+  }
+  return {
+    configured: value.configured,
+    region: value.region,
+    targetLanguage: value.targetLanguage,
+    firstLanguage: value.firstLanguage,
+  };
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Never echo the key, including from validation and transport failures. */
+function failureMessage(error: unknown, key: string): string {
+  const message = error instanceof Error ? error.message : "The settings could not be saved.";
+  return key && message.includes(key) ? "The settings could not be saved." : message;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+export function mountLanguageCoachSettings(container: HTMLElement, ctx: SettingsContext, signal: AbortSignal): () => void {
+  if (signal.aborted) return () => {};
+  const document = container.ownerDocument;
+  const root = document.createElement("div");
+  root.className = "lh-language-coach-settings";
+  const form = document.createElement("form");
+  form.className = "lh-language-coach-settings__form";
+
+  const keyField = labeledPassword(document, SPEECH_KEY_LABEL, "lh-language-coach-key");
+  const keyNote = note(document, SPEECH_KEY_DESCRIPTION);
+  const regionField = labeledText(document, REGION_LABEL, "lh-language-coach-region", "westus");
+  const targetField = labeledSelect(document, TARGET_LANGUAGE_LABEL, "lh-language-coach-target", [
+    { value: "en-US", label: "English (en-US)" },
+    { value: "zh-CN", label: "Mandarin (zh-CN)" },
+  ]);
+  const firstField = labeledText(document, FIRST_LANGUAGE_LABEL, "lh-language-coach-first", "en");
+
+  const actions = document.createElement("div");
+  actions.className = "lh-language-coach-settings__actions";
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save settings";
+  actions.append(save);
+
+  const status = document.createElement("p");
+  status.className = "lh-language-coach-settings__status";
+  status.setAttribute("role", "status");
+
+  const recorderSection = document.createElement("section");
+  recorderSection.className = "lh-language-coach-settings__recorder";
+  const recorderTitle = document.createElement("h3");
+  recorderTitle.textContent = "Record a clip";
+  const referenceInput = document.createElement("input");
+  referenceInput.type = "text";
+  referenceInput.placeholder = "Reference text to read aloud";
+  referenceInput.className = "lh-language-coach-settings__input";
+  const recordButton = document.createElement("button");
+  recordButton.type = "button";
+  recordButton.textContent = "Record";
+  const stopButton = document.createElement("button");
+  stopButton.type = "button";
+  stopButton.textContent = "Stop";
+  stopButton.disabled = true;
+  const recorderNote = note(document, `Recording stops automatically after ${RECORDING_LIMIT_MS / 1000} seconds.`);
+  recorderSection.append(recorderTitle, referenceInput, recordButton, stopButton, recorderNote);
+
+  form.append(keyField.field, keyNote, regionField.field, targetField.field, firstField.field, actions, status);
+  root.append(form, recorderSection);
+  container.append(root);
+
+  let disposed = false;
+  let busy = false;
+  let recorder: Awaited<ReturnType<typeof startRecorder>> | undefined;
+
+  const isLive = () => !disposed && !signal.aborted;
+  const apply = (settings: PublicSettings) => {
+    keyField.input.placeholder = settings.configured ? "Saved key — enter a new key to replace it" : "Paste an Azure Speech key";
+    regionField.input.value = settings.region;
+    targetField.input.value = settings.targetLanguage;
+    firstField.input.value = settings.firstLanguage;
+  };
+
+  const setStatus = (message: string, error = false) => {
+    status.textContent = message;
+    status.classList.toggle("lh-language-coach-settings__status-error", error);
+  };
+
+  const onSubmit = async (event: Event) => {
+    event.preventDefault();
+    if (busy || !isLive()) return;
+    busy = true;
+    const submittedKey = keyField.input.value.trim();
+    keyField.input.disabled = true;
+    save.disabled = true;
+    try {
+      const payload: Record<string, unknown> = {
+        region: regionField.input.value,
+        targetLanguage: targetField.input.value,
+        firstLanguage: firstField.input.value,
+      };
+      if (submittedKey) payload.key = submittedKey;
+      const settings = readPublicSettings(await ctx.call("save-settings", payload));
+      if (!isLive()) return;
+      if (submittedKey) keyField.input.value = "";
+      apply(settings);
+      setStatus(submittedKey ? "Saved. Clips are sent to Azure for pronunciation assessment." : "Saved.");
+    } catch (error) {
+      if (!isLive()) return;
+      setStatus(failureMessage(error, submittedKey), true);
+    } finally {
+      busy = false;
+      keyField.input.disabled = false;
+      save.disabled = false;
+    }
+  };
+
+  const startRecording = async () => {
+    if (!isLive() || recorder) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
+      recorder = await startRecorder({ stream });
+      recordButton.disabled = true;
+      stopButton.disabled = false;
+      setStatus("Recording…");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "The microphone could not be opened.", true);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recorder || !isLive()) return;
+    stopButton.disabled = true;
+    try {
+      const wav = await recorder.stop();
+      recorder = undefined;
+      recordButton.disabled = false;
+      const referenceText = referenceInput.value.trim();
+      if (!referenceText) {
+        setStatus("Enter reference text before assessing a recording.", true);
+        return;
+      }
+      const result = await ctx.call("assess-pronunciation", {
+        wavBase64: bytesToBase64(wav),
+        referenceText,
+        locale: targetField.input.value,
+      });
+      if (!isLive()) return;
+      if (record(result) && result.status === "unavailable") {
+        setStatus(result.reason as string, true);
+        return;
+      }
+      setStatus("Assessment received.");
+    } catch (error) {
+      if (!isLive()) return;
+      setStatus(error instanceof Error ? error.message : "The recording could not be assessed.", true);
+    } finally {
+      recordButton.disabled = false;
+      stopButton.disabled = true;
+    }
+  };
+
+  form.addEventListener("submit", onSubmit);
+  recordButton.addEventListener("click", () => { void startRecording(); });
+  stopButton.addEventListener("click", () => { void stopRecording(); });
+  const unsubscribe = ctx.onNotification(event => {
+    if (event.topic !== "settings-changed" || disposed) return;
+    try { apply(readPublicSettings(event.data)); } catch {}
+  });
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    signal.removeEventListener("abort", dispose);
+    unsubscribe();
+    form.removeEventListener("submit", onSubmit);
+    keyField.input.value = "";
+    void recorder?.stop().catch(() => {});
+    root.remove();
+  };
+  signal.addEventListener("abort", dispose, { once: true });
+
+  void (async () => {
+    try {
+      const settings = readPublicSettings(await ctx.call("get-settings"));
+      if (isLive()) apply(settings);
+    } catch {
+      if (isLive()) setStatus("The saved settings could not be read.", true);
+    }
+  })();
+
+  return dispose;
+}
+
+function note(document: Document, text: string): HTMLParagraphElement {
+  const note = document.createElement("p");
+  note.className = "lh-language-coach-settings__note";
+  note.textContent = text;
+  return note;
+}
+
+function labeledPassword(document: Document, label: string, id: string) {
+  const field = document.createElement("label");
+  field.className = "lh-language-coach-settings__field";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const input = document.createElement("input");
+  input.type = "password";
+  input.id = id;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.className = "lh-language-coach-settings__input";
+  field.append(title, input);
+  return { field, input };
+}
+
+function labeledText(document: Document, label: string, id: string, placeholder: string) {
+  const field = document.createElement("label");
+  field.className = "lh-language-coach-settings__field";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.id = id;
+  input.placeholder = placeholder;
+  input.className = "lh-language-coach-settings__input";
+  field.append(title, input);
+  return { field, input };
+}
+
+function labeledSelect(document: Document, label: string, id: string, options: { value: string; label: string }[]) {
+  const field = document.createElement("label");
+  field.className = "lh-language-coach-settings__field";
+  const title = document.createElement("span");
+  title.textContent = label;
+  const input = document.createElement("select");
+  input.id = id;
+  input.className = "lh-language-coach-settings__input";
+  for (const option of options) {
+    const element = document.createElement("option");
+    element.value = option.value;
+    element.textContent = option.label;
+    input.append(element);
+  }
+  field.append(title, input);
+  return { field, input };
+}

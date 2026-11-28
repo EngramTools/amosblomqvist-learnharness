@@ -1,0 +1,43 @@
+{
+  "RecognitionStatus": "Success",
+  "NBest": [
+    {
+      "PronunciationAssessment": {
+        "AccuracyScore": 88,
+        "FluencyScore": 90,
+        "CompletenessScore": 95,
+        "ProsodyScore": 72
+      },
+      "Words": [
+        {
+          "Word": "think",
+          "PronunciationAssessment": { "AccuracyScore": 70 },
+          "Phonemes": [
+            {
+              "Phoneme": "θ",
+              "PronunciationAssessment": { "AccuracyScore": 42 },
+              "NBestPhonemes": [
+                { "Phoneme": "s", "Score": 71 },
+                { "Phoneme": "θ", "Score": 42 },
+                { "Phoneme": "f", "Score": 12 },
+                { "Phoneme": "t", "Score": 8 },
+                { "Phoneme": "ð", "Score": 3 }
+              ]
+            },
+            {
+              "Phoneme": "ɪ",
+              "PronunciationAssessment": { "AccuracyScore": 90 },
+              "NBestPhonemes": [
+                { "Phoneme": "ɪ", "Score": 90 },
+                { "Phoneme": "i", "Score": 8 },
+                { "Phoneme": "ə", "Score": 1 },
+                { "Phoneme": "e", "Score": 1 },
+                { "Phoneme": "ɑ", "Score": 0 }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
