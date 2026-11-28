@@ -33,7 +33,9 @@ function withPayload(test: (fixture: {
 		seedAuthoringReferenceFixture(root);
 		write(path.join("scripts", "build-server.mjs"), source);
 		write("scripts/build-plugin-authoring.mjs", fs.readFileSync(new URL("../scripts/build-plugin-authoring.mjs", import.meta.url), "utf8"));
-		write("scripts/install-plugin-local.mjs", fs.readFileSync(new URL("../scripts/install-plugin-local.mjs", import.meta.url), "utf8"));
+		for (const name of ["install-plugin-local.mjs", "plugin-dist-validate.mjs"]) {
+			write(`scripts/${name}`, fs.readFileSync(new URL(`../scripts/${name}`, import.meta.url), "utf8"));
+		}
 		write("package.json", JSON.stringify({ version: "0.4.1" }));
 		write("LICENSE", "AGPL-3.0-only fixture");
 		write("core-plugins.json", fs.readFileSync(new URL("../core-plugins.json", import.meta.url), "utf8"));
@@ -134,7 +136,7 @@ describe("desktop standalone payload", () => {
 			for (const file of runtime) assert.ok(fs.existsSync(path.join(root, STANDALONE, file)), file);
 			assert.ok(fs.existsSync(path.join(root, STANDALONE, ".next", "static", "runtime.js")));
 			assert.ok(fs.existsSync(path.join(root, STANDALONE, "public", "asset.txt")));
-			for (const asset of ["scripts/plugin-loader.cjs", "public/plugin-loader.js", "plugin-authoring/docs/plugin-authoring.md", "plugin-authoring/docs/plugin-question-contract.md", "plugin-authoring/docs/plugin-session-extension-contract.md", "plugin-authoring/docs/plugin-tree-contract.md", "plugin-authoring/types/index.d.ts", "plugin-authoring/examples/plugins/hello-plugin/dist/manifest.json", "plugin-authoring/examples/plugins/hello-plugin/dist/main.js", "plugin-authoring/SKILL.md", "plugin-authoring/README.md", "plugin-authoring/bundle.json", "plugin-authoring/tools/install-plugin-local.mjs", "plugin-authoring/docs/plugin-api/README.md", "plugin-authoring/plugins/flashcards/src/backend.cjs", "plugin-authoring/plugins/ui-showcase/src/gallery.ts", "public/plugin-authoring/learnharness-plugins.zip"]) {
+			for (const asset of ["scripts/plugin-loader.cjs", "public/plugin-loader.js", "plugin-authoring/docs/plugin-authoring.md", "plugin-authoring/docs/plugin-question-contract.md", "plugin-authoring/docs/plugin-session-extension-contract.md", "plugin-authoring/docs/plugin-tree-contract.md", "plugin-authoring/types/index.d.ts", "plugin-authoring/examples/plugins/hello-plugin/dist/manifest.json", "plugin-authoring/examples/plugins/hello-plugin/dist/main.js", "plugin-authoring/SKILL.md", "plugin-authoring/README.md", "plugin-authoring/bundle.json", "plugin-authoring/tools/install-plugin-local.mjs", "plugin-authoring/tools/plugin-dist-validate.mjs", "plugin-authoring/docs/plugin-api/README.md", "plugin-authoring/plugins/flashcards/src/backend.cjs", "plugin-authoring/plugins/ui-showcase/src/gallery.ts", "public/plugin-authoring/learnharness-plugins.zip"]) {
 				assert.ok(fs.existsSync(path.join(root, STANDALONE, asset)), asset);
 			}
 		});

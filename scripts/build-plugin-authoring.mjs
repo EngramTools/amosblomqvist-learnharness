@@ -109,7 +109,9 @@ export function buildPluginAuthoring({ root = path.resolve(import.meta.dirname, 
 	const stage = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "lh-authoring-")));
 	try {
 		copyFile(root, path.join(root, "LICENSE"), path.join(stage, "LICENSE"));
-		copyFile(root, path.join(root, "scripts", "install-plugin-local.mjs"), path.join(stage, "tools", "install-plugin-local.mjs"));
+		for (const name of ["install-plugin-local.mjs", "plugin-dist-validate.mjs"]) {
+			copyFile(root, path.join(root, "scripts", name), path.join(stage, "tools", name));
+		}
 		for (const filename of AUTHORING_DOCS) copyFile(root, path.join(root, "docs", filename), path.join(stage, "docs", filename));
 		for (const id of AUTHORING_EXAMPLES) {
 			const source = path.join(root, "examples", "plugins", id), destination = path.join(stage, "examples", "plugins", id);

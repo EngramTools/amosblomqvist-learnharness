@@ -1,0 +1,53 @@
+name: Language coach plugin release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["language-coach-v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: language-coach-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  package:
+    name: Package language-coach
+    if: github.repository != 'amosblomqvist/learnharness'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+      - run: npm ci
+      - run: npm run plugins:setup
+      - run: node scripts/package-language-coach.mjs --output dist
+      - name: Publish GitHub release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync("plugins/language-coach/dist/manifest.json","utf8")).version)')
+          ARCHIVE="dist/language-coach-${VERSION}.zip"
+          test -f "$ARCHIVE"
+          if [[ "${GITHUB_REF_TYPE:-}" == tag ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="language-coach-v${VERSION}"
+          fi
+          if [[ "$TAG" != "language-coach-v${VERSION}" ]]; then
+            echo "::error::Tag $TAG must equal language-coach-v${VERSION}"
+            exit 1
+          fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Language coach ${VERSION}" --notes "Prebuilt language-coach plugin for stock LearnHarness installs (no Node toolchain required). See plugins/language-coach/README.md for installation."
+          fi
+          gh release upload "$TAG" "$ARCHIVE" --clobber

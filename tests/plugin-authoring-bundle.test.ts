@@ -63,7 +63,9 @@ function fixture(run: (root: string) => void) {
 	try {
 		seedAuthoringReferenceFixture(root);
 		write("package.json", JSON.stringify({ version: "9.8.7" }));
-		write("scripts/install-plugin-local.mjs", fs.readFileSync(path.join(source, "scripts/install-plugin-local.mjs"), "utf8"));
+		for (const name of ["install-plugin-local.mjs", "plugin-dist-validate.mjs"]) {
+			write(`scripts/${name}`, fs.readFileSync(path.join(source, "scripts", name), "utf8"));
+		}
 		write("docs/archive/plugin-implementation-history.md", "REPOSITORY_ONLY_HISTORY_SENTINEL");
 		write("LICENSE", fs.readFileSync(path.join(source, "LICENSE"), "utf8"));
 		for (const doc of AUTHORING_DOCS) write(`docs/${doc}`, fs.readFileSync(path.join(source, "docs", doc), "utf8"));
@@ -95,8 +97,10 @@ it("produces the complete rooted skill, matching versions, current example layou
 			assert.doesNotMatch(name.slice(prefix.length), /^(?:dist|data|node_modules|\.sdk|\.git)\//);
 		}
 	}
-	assert.deepEqual(entries.get("learnharness-plugins/tools/install-plugin-local.mjs"), fs.readFileSync(path.join(root, "scripts/install-plugin-local.mjs")));
-	for (const name of ["SKILL.md", "README.md", "LICENSE", "bundle.json", "tools/install-plugin-local.mjs", "types/index.d.ts", ...AUTHORING_DOCS.map((doc: string) => `docs/${doc}`)]) assert.ok(entries.has(`learnharness-plugins/${name}`), name);
+	for (const tool of ["install-plugin-local.mjs", "plugin-dist-validate.mjs"]) {
+		assert.deepEqual(entries.get(`learnharness-plugins/tools/${tool}`), fs.readFileSync(path.join(root, "scripts", tool)));
+	}
+	for (const name of ["SKILL.md", "README.md", "LICENSE", "bundle.json", "tools/install-plugin-local.mjs", "tools/plugin-dist-validate.mjs", "types/index.d.ts", ...AUTHORING_DOCS.map((doc: string) => `docs/${doc}`)]) assert.ok(entries.has(`learnharness-plugins/${name}`), name);
 	const skill = entries.get("learnharness-plugins/SKILL.md")!.toString();
 	assert.match(skill, /\(\.\/docs\/plugin-authoring.md\)/); assert.match(skill, /\(\.\/examples\/plugins\/hello-plugin\/README.md\)/);
 	assert.doesNotMatch(skill, /\.\.\/\.\.\//);

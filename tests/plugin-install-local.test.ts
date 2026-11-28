@@ -7,7 +7,8 @@ import { it, mock } from "node:test";
 import { installPluginLocal } from "../scripts/install-plugin-local.mjs";
 import { parsePluginManifest } from "../src/core/plugins.ts";
 
-const helper = path.resolve(import.meta.dirname, "../scripts/install-plugin-local.mjs");
+const scripts = path.resolve(import.meta.dirname, "../scripts");
+const helper = path.join(scripts, "install-plugin-local.mjs");
 function fixture(run: (f: { root: string; project: string; directory: string; installed: string; write: (name: string, data: string) => void; manifest: Record<string, unknown> }) => void) {
 	const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "lh-install-local-")));
 	const project = path.join(root, "source project"), directory = path.join(root, "app profile", "plugins"), installed = path.join(directory, "test-plugin");
@@ -137,7 +138,8 @@ it("if rollback itself fails, retains and reports the previous dist backup rathe
 	assert.equal(fs.readFileSync(path.join(installed, "data/private.json"), "utf8"), "installed data");
 }));
 it("the documented npm command builds and installs without a checkout, and build failure prevents installation", () => fixture(({ root, project, directory, installed, write }) => {
-	fs.mkdirSync(path.join(project, "scripts")); fs.copyFileSync(helper, path.join(project, "scripts/install-plugin-local.mjs"));
+	fs.mkdirSync(path.join(project, "scripts"));
+	for (const name of ["install-plugin-local.mjs", "plugin-dist-validate.mjs"]) fs.copyFileSync(path.join(scripts, name), path.join(project, "scripts", name));
 	write("source project/package.json", JSON.stringify({ private: true, scripts: { build: 'node -e "process.exit(Number(process.env.FAIL_BUILD || 0))"', "install:local": "npm run build && node scripts/install-plugin-local.mjs" } }));
 	const npm = process.env.npm_execpath;
 	assert.ok(npm, "test must run under npm");
