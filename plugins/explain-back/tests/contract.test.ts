@@ -98,6 +98,10 @@ test("saved grading results accept only the documented version, reconstruction a
   assert.equal(readExplainBackResult({ ...result, gaps: [{ kind: "missing step" }] }), null);
   assert.equal(readExplainBackResult({ ...result, gaps: "none" }), null);
   assert.equal(readExplainBackResult(null), null);
+  assert.deepEqual(readExplainBackResult({ ...result, gradedBy: "claude-code/sonnet" }), { ...result, gradedBy: "claude-code/sonnet" });
+  // An unreadable gradedBy is dropped, not fatal: older saves stay readable.
+  assert.deepEqual(readExplainBackResult({ ...result, gradedBy: 42 }), result);
+  assert.deepEqual(readExplainBackResult({ ...result, gradedBy: "   " }), result);
 });
 
 test("saved scoring accepts complete probabilities and one fix, and rejects partial shapes", () => {

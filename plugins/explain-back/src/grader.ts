@@ -34,7 +34,30 @@ export type ExplainBackGradeOptions = {
   interviewMode?: boolean;
   pauseThresholdSeconds?: number;
   jev?: JevRuntime;
+  /** Test-only override of MODEL_CALL_TIMEOUT_MS; production callers omit it. */
+  modelCallTimeoutMs?: number;
 };
+
+/** Upper bound on one host-model call. A hung grading model must surface as
+ *  a grading error instead of stalling the submission forever. */
+export const MODEL_CALL_TIMEOUT_MS = 60_000;
+
+/** `provider/id`, the form every result and error names the model with. */
+export function modelLabel(model: PluginModelSpec): string {
+  return `${model.provider}/${model.id}`;
+}
+
+/** Reject a hung host-model call: race the call against a bounded timer so
+ *  a stalled grading model surfaces as a grading error, not a deadlock. */
+async function withTimeout<T>(call: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const { promise, reject } = Promise.withResolvers<never>();
+  const timer = setTimeout(() => reject(new Error(`The ${label} call timed out after ${Math.round(timeoutMs / 1000)} seconds.`)), timeoutMs);
+  try {
+    return await Promise.race([call, promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 type FixWordingInput = {
   payload: ExplainBackPayload;
@@ -106,11 +129,11 @@ export function buildFixWordingMessage(input: FixWordingInput): string {
 }
 
 /** Reject provider failures and truncation instead of reading partial text as success. */
-function completionText(message: AssistantMessage): string {
+function completionText(message: AssistantMessage, model: PluginModelSpec): string {
   if (message.stopReason !== "stop") {
     throw new Error(message.stopReason === "aborted"
       ? "Explain-back grading was cancelled."
-      : `The literal reader could not finish: ${message.errorMessage ?? message.stopReason}.`);
+      : `The literal reader (${modelLabel(model)}) could not finish: ${message.errorMessage ?? message.stopReason}.`);
   }
   let text = "";
   for (const part of message.content) if (part.type === "text") text += part.text;
@@ -167,7 +190,7 @@ type ScoreLiteracyRequest = {
   options: ExplainBackGradeOptions;
 };
 
-type FixWordingRequest = Pick<ScoreLiteracyRequest, "context" | "model"> & { input: FixWordingInput; signal: AbortSignal };
+type FixWordingRequest = Pick<ScoreLiteracyRequest, "context" | "model"> & { input: FixWordingInput; signal: AbortSignal; options: ExplainBackGradeOptions };
 
 export async function gradeExplainBack<Q, A>(
   context: LiteralReaderContext,
@@ -182,7 +205,7 @@ export async function gradeExplainBack<Q, A>(
     pauseThresholdSeconds: options.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
   });
   const model = await resolveGradingModel(context, grading.chatId);
-  const message = await context.inference.complete({
+  const message = await withTimeout(context.inference.complete({
     model,
     purpose: "user",
     context: {
@@ -194,12 +217,13 @@ export async function gradeExplainBack<Q, A>(
       }],
     },
     signal: grading.signal,
-  });
+  }), options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `literal reader (${modelLabel(model)})`);
   grading.signal.throwIfAborted();
-  const replyText = completionText(message);
-  if (!replyText) throw new Error("The literal reader returned no text.");
+  const replyText = completionText(message, model);
+  if (!replyText) throw new Error(`The literal reader (${modelLabel(model)}) returned no text.`);
   const result = readExplainBackResult(parseLiteralReaderReply(replyText));
-  if (!result) throw new Error(`The literal reader returned an invalid result. Expected version ${RESULT_VERSION} with a reconstruction and gaps of a known kind.`);
+  if (!result) throw new Error(`The literal reader (${modelLabel(model)}) returned an invalid result. Expected version ${RESULT_VERSION} with a reconstruction and gaps of a known kind.`);
+  result.gradedBy = modelLabel(model);
   const input = { payload, explanation: answer.text, result, metrics: delivery.status === "ok" ? deliveryMetrics(delivery) : undefined };
   const scoring = await scoreLiteracy({ context, model, signal: grading.signal, input, options });
   return { ...result, scoring, delivery };
@@ -255,10 +279,10 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
   request.signal.throwIfAborted();
   let wording: string;
   try {
-    wording = await writeFixWording({ context: request.context, model: request.model, input: { ...request.input, scores }, signal: request.signal });
+    wording = await writeFixWording({ context: request.context, model: request.model, input: { ...request.input, scores }, signal: request.signal, options: request.options });
   } catch (error) {
     request.signal.throwIfAborted();
-    return unavailable(error instanceof Error ? error.message : `The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
+    return unavailable(error instanceof Error ? error.message : `The explain-back model ${modelLabel(request.model)} could not write the fix wording.`);
   }
   return { status: "ok", criteria: scores.criteria, fix: { ...scores.fix, wording } };
 }
@@ -266,7 +290,7 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
 async function writeFixWording(request: FixWordingRequest): Promise<string> {
   let text: string;
   try {
-    const message = await request.context.inference.complete({
+    const message = await withTimeout(request.context.inference.complete({
       model: request.model,
       purpose: "user",
       context: {
@@ -278,12 +302,12 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
         }],
       },
       signal: request.signal,
-    });
+    }), request.options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `explain-back model ${modelLabel(request.model)}`);
     request.signal.throwIfAborted();
-    text = completionText(message);
+    text = completionText(message, request.model);
   } catch (error) {
     request.signal.throwIfAborted();
-    throw new Error(`The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
+    throw new Error(`The explain-back model ${modelLabel(request.model)} could not write the fix wording.`);
   }
   // Outside the provider-failure catch so readFixWording's model-named
   // diagnostic reaches the unavailable reason.
@@ -293,7 +317,7 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
 /** Read the wording reply; blank text is a failed call, named after the model that ran. */
 export function readFixWording(text: string, model: PluginModelSpec): string {
   const wording = text.trim();
-  if (!wording) throw new Error(`The explain-back model ${model.provider}/${model.id} returned no fix wording.`);
+  if (!wording) throw new Error(`The explain-back model ${modelLabel(model)} returned no fix wording.`);
   return wording;
 }
 

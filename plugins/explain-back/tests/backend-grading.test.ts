@@ -155,6 +155,7 @@ function fixture(options: {
   complete?: (request: PluginInferenceRequest) => Promise<AssistantMessage>;
   typesafeKey?: string;
   jev?: JevRuntime;
+  modelCallTimeoutMs?: number;
 } = {}) {
   let definition: PluginQuestionTypeDefinition | undefined;
   const requests: PluginInferenceRequest[] = [];
@@ -181,7 +182,10 @@ function fixture(options: {
       definition = value;
       return () => {};
     },
-  } as unknown as PluginBackendContext, { jev: options.jev });
+  } as unknown as PluginBackendContext, {
+    jev: options.jev,
+    ...(options.modelCallTimeoutMs === undefined ? {} : { modelCallTimeoutMs: options.modelCallTimeoutMs }),
+  });
   assert.ok(definition?.gradeAnswer, "activation registers a grader");
   if (options.typesafeKey) handlers.get("set-typesafe-key")!({ key: options.typesafeKey });
   return { grade: definition.gradeAnswer as unknown as Grade, requests, cleanup };
@@ -192,7 +196,7 @@ test("grades through the session model and returns the literal reconstruction an
   const f = fixture({ session });
   const result = await f.grade(gradingContext());
 
-  assert.deepEqual(result, { ...gradedPayload, scoring: noKeyScoring, delivery: typedDelivery });
+  assert.deepEqual(result, { ...gradedPayload, scoring: noKeyScoring, delivery: typedDelivery, gradedBy: "test/session-model" });
   assert.equal(f.requests.length, 1);
   const request = f.requests[0]!;
   assert.deepEqual(request.model, { provider: "test", id: "session-model", thinkingLevel: "high" });
@@ -227,7 +231,7 @@ test("an empty reconstruction with a missing-step gap is a valid result, not a g
   const f = fixture({ complete: async () => reply(JSON.stringify({ version: 1, reconstruction: "", gaps: [gap] })) });
   const context = gradingContext();
   const result = await f.grade({ ...context, answer: { text: "Something about evens." } });
-  assert.deepEqual(result, { version: 1, reconstruction: "", gaps: [gap], scoring: noKeyScoring, delivery: typedDelivery });
+  assert.deepEqual(result, { version: 1, reconstruction: "", gaps: [gap], scoring: noKeyScoring, delivery: typedDelivery, gradedBy: "test/default-model" });
   assert.match(f.requests[0]!.context.systemPrompt!, /establish nothing, return an empty reconstruction/i);
   f.cleanup();
 });
@@ -240,7 +244,7 @@ test("falls back to the strong-slot default when the session has no model overri
 
 test("accepts a fenced JSON reply and rejects unreadable or invalid results", async () => {
   const fenced = fixture({ complete: async () => reply("```json\n" + JSON.stringify(gradedPayload) + "\n```") });
-  assert.deepEqual(await fenced.grade(gradingContext()), { ...gradedPayload, scoring: noKeyScoring, delivery: typedDelivery });
+  assert.deepEqual(await fenced.grade(gradingContext()), { ...gradedPayload, scoring: noKeyScoring, delivery: typedDelivery, gradedBy: "test/default-model" });
 
   const invalidKind = fixture({ complete: async () => reply(JSON.stringify({ ...gradedPayload, gaps: [{ kind: "missing premise", detail: "Something" }] })) });
   await assert.rejects(invalidKind.grade(gradingContext()), /invalid result/i);
@@ -254,7 +258,7 @@ test("a failed model call rejects so the host saves the answer with a readable g
   await assert.rejects(f.grade(gradingContext()), /Provider connection failed\./);
 
   const truncated = fixture({ complete: async () => reply("{\"version\":1", "error") });
-  await assert.rejects(truncated.grade(gradingContext()), /literal reader could not finish: The provider refused the request\./);
+  await assert.rejects(truncated.grade(gradingContext()), /literal reader \(test\/default-model\) could not finish: The provider refused the request\./);
 });
 
 test("an unconfigured model and an aborted submission reject before inference", async () => {
@@ -322,7 +326,9 @@ test("a cheap slot whose model is missing from the catalog falls back to the ses
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const f = fixture({
     session: claudeSession,
-    catalog: claudeCatalog({ model: { provider: "claude-code", id: "haiku" } }),
+    // Same id as a listed model, different provider: only the full
+    // provider+id compare may accept this slot.
+    catalog: claudeCatalog({ model: { provider: "openai", id: "opus" } }),
     complete: answerBothPrompts,
     typesafeKey: "sk-typesafe-grading",
     jev: { endpoint: stub.url, timeoutMs: 500 },
@@ -374,6 +380,70 @@ test("a failed fix-wording call on the cheap-slot model names it in the unavaila
     assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
   } finally {
     f.cleanup();
+    await stub.close();
+  }
+});
+
+test("a successful grade records the model that ran as gradedBy", async () => {
+  const session = chatWith({ model: { provider: "test", id: "session-model" }, thinkingLevel: "high" });
+  const f = fixture({ session });
+  const result = await f.grade(gradingContext());
+  assert.equal(result.gradedBy, "test/session-model");
+  f.cleanup();
+});
+
+test("a cheap slot without a thinking level is used without one, not with the session default", async () => {
+  const f = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "sonnet" } }),
+  });
+  const result = await f.grade(gradingContext());
+  assert.deepEqual(f.requests[0]!.model, { provider: "claude-code", id: "sonnet" });
+  assert.equal(result.gradedBy, "claude-code/sonnet");
+  f.cleanup();
+});
+
+test("a cheap slot without a model is not used, even when the catalog lists models", async () => {
+  const f = fixture({ session: claudeSession, catalog: claudeCatalog({} as never) });
+  const result = await f.grade(gradingContext());
+  assert.deepEqual(f.requests[0]!.model, { provider: "claude-code", id: "opus", thinkingLevel: "high" });
+  assert.equal(result.gradedBy, "claude-code/opus");
+  f.cleanup();
+});
+
+test("a reader error names the model that ran", async () => {
+  const truncated = fixture({ complete: async () => reply("{\"version\":1", "error") });
+  await assert.rejects(truncated.grade(gradingContext()), /literal reader \(test\/default-model\) could not finish: The provider refused the request\./);
+});
+
+test("a hung literal-reader call times out as a grading error", async () => {
+  const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}), modelCallTimeoutMs: 40 });
+  await assert.rejects(f.grade(gradingContext()), /literal reader \(test\/default-model\) call timed out after 0 seconds\./);
+  f.cleanup();
+});
+
+test("a hung fix-wording call marks scoring unavailable instead of hanging", async () => {
+  const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
+  const hanging = fixture({
+    session: claudeSession,
+    catalog: claudeCatalog({ model: { provider: "claude-code", id: "sonnet" }, thinkingLevel: "low" }),
+    complete: async (request) => {
+      if (request.context.systemPrompt === fixWordingInstructions) {
+        await new Promise<never>(() => {});
+      }
+      return reply(JSON.stringify(gradedPayload));
+    },
+    typesafeKey: "sk-typesafe-grading",
+    jev: { endpoint: stub.url, timeoutMs: 500 },
+    modelCallTimeoutMs: 40,
+  });
+  try {
+    const result = await hanging.grade(gradingContext());
+    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
+    assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
+    assert.equal(result.reconstruction, gradedPayload.reconstruction);
+  } finally {
+    hanging.cleanup();
     await stub.close();
   }
 });

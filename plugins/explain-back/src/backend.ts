@@ -8,6 +8,8 @@ import { gradeExplainBack, type JevRuntime } from "./grader.ts";
 export type ExplainBackBackendOptions = {
   /** Test-only transport override; the host always activates without it. */
   jev?: JevRuntime;
+  /** Test-only bound on one host-model call; the host always uses the default. */
+  modelCallTimeoutMs?: number;
 };
 
 type Settings = { typesafeApiKey?: string; interviewMode?: boolean; pauseThresholdSeconds?: number };
@@ -129,6 +131,7 @@ export function activate(ctx: PluginBackendContext, options: ExplainBackBackendO
         interviewMode: settings.interviewMode ?? false,
         pauseThresholdSeconds: settings.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
         jev: options.jev,
+        ...(options.modelCallTimeoutMs === undefined ? {} : { modelCallTimeoutMs: options.modelCallTimeoutMs }),
       }),
     });
   } catch (error) {

@@ -179,6 +179,7 @@ test("saves the key in the data directory and grades through the registered grad
         fix: { criterion: "missing step", probability: 0.82, wording },
       },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
     const request = stub.requests[0]!.body as JevRequest;
     assert.deepEqual(request.state, {
@@ -212,6 +213,7 @@ test("no key leaves the literal feedback unchanged and marks scoring unavailable
       ...literalResult,
       scoring: { status: "unavailable", reason: "No TypeSafe API key is configured, so criterion scoring is unavailable." },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
     assert.equal("criteria" in result.scoring, false);
     assert.equal("fix" in result.scoring, false);
@@ -276,6 +278,7 @@ test("a failed fix-wording call marks scoring unavailable instead of returning p
       ...literalResult,
       scoring: { status: "unavailable", reason: "The explain-back model test/default-model could not write the fix wording." },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
   } finally {
     f.cleanup();

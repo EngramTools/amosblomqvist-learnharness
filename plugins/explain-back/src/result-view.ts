@@ -107,6 +107,15 @@ function mountScoring(document: Document, container: HTMLElement, scoring: Expla
   container.append(unavailable);
 }
 
+/** The model that graded this result, shown on every outcome: ok cards,
+ *  unavailable scoring, and reader errors. Older saved results have none. */
+function mountGradedBy(document: Document, container: HTMLElement, model: string | undefined): void {
+  if (!model) return;
+  const provenance = paragraph(document, "lh-explain-back__graded-by", `Graded by ${model}.`);
+  provenance.dataset.gradedBy = model;
+  container.append(provenance);
+}
+
 function mountResult(document: Document, container: HTMLElement, result: ExplainBackResult): void {
   const reconstruction = section(document, "lh-explain-back__reconstruction", "What a literal reader understood");
   reconstruction.append(result.reconstruction.trim() === ""
@@ -138,6 +147,7 @@ function mountResult(document: Document, container: HTMLElement, result: Explain
   container.append(gaps);
   if (result.scoring) mountScoring(document, container, result.scoring);
   if (result.delivery) mountDelivery(document, container, result.delivery);
+  mountGradedBy(document, container, result.gradedBy);
 }
 
 export function mountGrading(container: HTMLElement, grading: PluginQuestionGradingOutcome, signal: AbortSignal): () => void {
