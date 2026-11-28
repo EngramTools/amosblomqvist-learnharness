@@ -1,0 +1,30 @@
+{
+  "RecognitionStatus": "Success",
+  "NBest": [
+    {
+      "PronunciationAssessment": {
+        "AccuracyScore": 81,
+        "FluencyScore": 85,
+        "CompletenessScore": 100
+      },
+      "Words": [
+        {
+          "Word": "你好",
+          "PronunciationAssessment": { "AccuracyScore": 81 },
+          "Syllables": [
+            {
+              "Syllable": "ni3",
+              "Pinyin": "nǐ",
+              "PronunciationAssessment": { "AccuracyScore": 78 }
+            },
+            {
+              "Syllable": "hao3",
+              "Pinyin": "hǎo",
+              "PronunciationAssessment": { "AccuracyScore": 84 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
