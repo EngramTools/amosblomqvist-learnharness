@@ -22,16 +22,6 @@ export function buildPronunciationAssessmentHeader(referenceText: string, locale
     NBestPhonemeCount: 5,
   };
   if (locale === "en-US") header.EnableProsodyAssessment = true;
-  return toAsciiJson(header);
-}
-
-/** HTTP headers must stay ASCII; Azure accepts JSON with \\u escapes in ReferenceText. */
-function toAsciiJson(value: unknown): string {
-  return JSON.stringify(value).replace(/[^\u0020-\u007e]/gu, character => {
-    const code = character.codePointAt(0) ?? 0;
-    if (code <= 0xffff) return `\\u${code.toString(16).padStart(4, "0")}`;
-    const first = 0xd800 + ((code - 0x10000) >> 10);
-    const second = 0xdc00 + ((code - 0x10000) & 0x3ff);
-    return `\\u${first.toString(16).padStart(4, "0")}\\u${second.toString(16).padStart(4, "0")}`;
-  });
+  // Azure's short-audio REST contract wants Base64-encoded UTF-8 JSON in this header.
+  return Buffer.from(JSON.stringify(header), "utf8").toString("base64");
 }

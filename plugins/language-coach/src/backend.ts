@@ -22,15 +22,20 @@ export type LanguageCoachBackendOptions = {
 
 /** 30 s of 16 kHz mono 16-bit PCM plus the WAV header. */
 const MAX_CLIP_BYTES = (RECORDING_LIMIT_MS / 1000) * 16_000 * 2 + 44;
+/** One capture quantum (4096 frames) can still land after the limit timer stopped the recorder. */
+const CAPTURE_QUANTUM_BYTES = 4096 * 2;
+const MAX_REQUEST_CLIP_BYTES = MAX_CLIP_BYTES + CAPTURE_QUANTUM_BYTES;
+/** Azure assesses at most 30 s of speech, so a longer reference text can never be read in one clip. */
+const REFERENCE_TEXT_MAX_LENGTH = 500;
 
 function decodeClip(input: unknown): Uint8Array {
   if (!record(input) || typeof input.wavBase64 !== "string") throw new Error("Expected a recorded WAV clip.");
   const trimmed = input.wavBase64.trim();
   if (!trimmed) throw new Error("The recorded clip is empty.");
-  if (trimmed.length > Math.ceil(MAX_CLIP_BYTES / 3) * 4) throw new Error("The recorded clip is longer than the 30-second limit.");
+  if (trimmed.length > Math.ceil(MAX_REQUEST_CLIP_BYTES / 3) * 4) throw new Error("The recorded clip is longer than the 30-second limit.");
   const bytes = Buffer.from(trimmed, "base64");
   if (!bytes.length) throw new Error("The recorded clip is empty.");
-  if (bytes.length > MAX_CLIP_BYTES) throw new Error("The recorded clip is longer than the 30-second limit.");
+  if (bytes.length > MAX_REQUEST_CLIP_BYTES) throw new Error("The recorded clip is longer than the 30-second limit.");
   return new Uint8Array(bytes);
 }
 
@@ -38,6 +43,9 @@ function readReferenceText(input: unknown): string {
   if (!record(input) || typeof input.referenceText !== "string") throw new Error("Expected reference text.");
   const text = input.referenceText.trim();
   if (!text) throw new Error("The reference text must not be blank.");
+  if (text.length > REFERENCE_TEXT_MAX_LENGTH) {
+    throw new Error(`The reference text must be at most ${REFERENCE_TEXT_MAX_LENGTH} characters.`);
+  }
   return text;
 }
 

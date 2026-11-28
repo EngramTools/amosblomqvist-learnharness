@@ -19,10 +19,11 @@ function readFixture(name: string): unknown {
   return JSON.parse(fs.readFileSync(path.join(fixtureRoot, "fixtures", name), "utf8"));
 }
 
+/** Azure expects the Pronunciation-Assessment header as Base64-encoded JSON. */
 function parseHeader(requestHeaders: IncomingHttpHeaders): Record<string, unknown> {
   const raw = requestHeaders["pronunciation-assessment"];
   assert.ok(typeof raw === "string");
-  return JSON.parse(raw) as Record<string, unknown>;
+  return JSON.parse(Buffer.from(raw, "base64").toString("utf8")) as Record<string, unknown>;
 }
 
 function isPcmWav(body: Buffer): boolean {
@@ -146,9 +147,63 @@ test("assess returns unavailable when the response body times out", async () => 
   assert.deepEqual(result, { status: "unavailable", reason: "Azure pronunciation assessment timed out." });
 });
 
-test("the pronunciation header keeps non-ASCII reference text as ASCII JSON", () => {
+test("the pronunciation header is Base64-encoded JSON that keeps non-ASCII reference text", () => {
   const header = buildPronunciationAssessmentHeader("你好 😀", "zh-CN");
-  assert.match(header, /^[\x20-\x7e]*$/);
-  const parsed = JSON.parse(header) as { ReferenceText: string };
+  assert.match(header, /^[A-Za-z0-9+/]+={0,2}$/);
+  const parsed = JSON.parse(Buffer.from(header, "base64").toString("utf8")) as { ReferenceText: string };
   assert.equal(parsed.ReferenceText, "你好 😀");
+});
+
+// Azure's REST endpoint reports the scores flat on the best entry and its words; the Speech SDK nests
+// them under PronunciationAssessment, which is the shape the fixtures above still use.
+test("the REST response shape maps the scores Azure returns on the best entry and its words", async () => {
+  const stub = await stubSpeechServer((_request, response) => {
+    sendJson(response, 200, {
+      RecognitionStatus: "Success",
+      NBest: [{
+        AccuracyScore: 88,
+        FluencyScore: 90,
+        CompletenessScore: 95,
+        ProsodyScore: 72,
+        Words: [{
+          Word: "think",
+          AccuracyScore: 70,
+          Phonemes: [{
+            Phoneme: "θ",
+            AccuracyScore: 42,
+            NBestPhonemes: [{ Phoneme: "s" }, { Phoneme: "θ" }],
+          }],
+        }],
+      }],
+    });
+  });
+  stubs.push(stub);
+
+  const result = await assess(sampleClip(), "think", "en-US", {
+    subscriptionKey: "azure-key",
+    region: "westus",
+    endpointBase: stub.host,
+  });
+  assert.equal(result.status, "ok");
+  if (result.status !== "ok") return;
+  assert.equal(result.scores.accuracy, 88);
+  assert.equal(result.scores.fluency, 90);
+  assert.equal(result.scores.completeness, 95);
+  assert.equal(result.scores.prosody, 72);
+  assert.deepEqual(result.words, [{ word: "think", score: 70 }]);
+  assert.deepEqual(result.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ"] });
+});
+
+test("a NoMatch response is unavailable instead of a zero-score assessment", async () => {
+  const stub = await stubSpeechServer((_request, response) => {
+    sendJson(response, 200, { RecognitionStatus: "NoMatch", NBest: [{ Words: [] }] });
+  });
+  stubs.push(stub);
+
+  const result = await assess(sampleClip(), "hello", "en-US", {
+    subscriptionKey: "azure-key",
+    region: "westus",
+    endpointBase: stub.host,
+  });
+  assert.equal(result.status, "unavailable");
 });

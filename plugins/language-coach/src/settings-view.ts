@@ -46,8 +46,16 @@ function failureMessage(error: unknown, key: string): string {
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
   return btoa(binary);
+}
+
+/** Release the microphone when the capture never started or must not continue. */
+function stopTracks(stream: MediaStream): void {
+  for (const track of stream.getTracks()) track.stop();
 }
 
 export function mountLanguageCoachSettings(container: HTMLElement, ctx: SettingsContext, signal: AbortSignal): () => void {
@@ -105,6 +113,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   let disposed = false;
   let busy = false;
   let stopping = false;
+  let starting = false;
   let recorder: RecorderHandle | undefined;
 
   const isLive = () => !disposed && !signal.aborted;
@@ -152,15 +161,31 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   };
 
   const startRecording = async () => {
-    if (!isLive() || recorder) return;
+    if (!isLive() || recorder || starting || stopping) return;
+    starting = true;
+    let stream: MediaStream | undefined;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
-      recorder = await startRecorder({ stream, onLimit: () => { void stopRecording(); } });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
+      if (!isLive()) {
+        stopTracks(stream);
+        return;
+      }
+      const handle = await startRecorder({ stream, onLimit: () => { void stopRecording(); } });
+      recorder = handle;
+      if (!isLive()) {
+        recorder = undefined;
+        await handle.stop().catch(() => {});
+        return;
+      }
       recordButton.disabled = true;
       stopButton.disabled = false;
       setStatus("Recording…");
     } catch (error) {
+      if (stream) stopTracks(stream);
+      if (!isLive()) return;
       setStatus(error instanceof Error ? error.message : "The microphone could not be opened.", true);
+    } finally {
+      starting = false;
     }
   };
 
@@ -172,7 +197,6 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     try {
       const wav = await active.stop();
       recorder = undefined;
-      recordButton.disabled = false;
       const referenceText = referenceInput.value.trim();
       if (!referenceText) {
         setStatus("Enter reference text before assessing a recording.", true);

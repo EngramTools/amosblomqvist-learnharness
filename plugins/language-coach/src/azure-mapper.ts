@@ -11,19 +11,28 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readScore(value: unknown): number | undefined {
-  if (!record(value)) return undefined;
-  const score = value.AccuracyScore;
-  return typeof score === "number" && Number.isFinite(score) ? score : undefined;
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function mapScores(pronunciation: Record<string, unknown>): AssessmentScores {
+/** Azure's REST endpoint reports the score flat on the entry; the SDK nests it under PronunciationAssessment. */
+function readScore(value: unknown): number | undefined {
+  if (!record(value)) return undefined;
+  const direct = readNumber(value.AccuracyScore);
+  if (direct !== undefined) return direct;
+  const nested = value.PronunciationAssessment;
+  return record(nested) ? readNumber(nested.AccuracyScore) : undefined;
+}
+
+function mapScores(entry: Record<string, unknown>): AssessmentScores {
+  const source = record(entry.PronunciationAssessment) ? entry.PronunciationAssessment : entry;
   const scores: AssessmentScores = {
-    accuracy: typeof pronunciation.AccuracyScore === "number" ? pronunciation.AccuracyScore : 0,
-    fluency: typeof pronunciation.FluencyScore === "number" ? pronunciation.FluencyScore : 0,
-    completeness: typeof pronunciation.CompletenessScore === "number" ? pronunciation.CompletenessScore : 0,
+    accuracy: readNumber(source.AccuracyScore) ?? 0,
+    fluency: readNumber(source.FluencyScore) ?? 0,
+    completeness: readNumber(source.CompletenessScore) ?? 0,
   };
-  if (typeof pronunciation.ProsodyScore === "number") scores.prosody = pronunciation.ProsodyScore;
+  const prosody = readNumber(source.ProsodyScore);
+  if (prosody !== undefined) scores.prosody = prosody;
   return scores;
 }
 
@@ -42,10 +51,9 @@ function mapPhonemes(words: unknown): PhonemeAssessment[] {
     if (!record(word) || !Array.isArray(word.Phonemes)) continue;
     for (const phoneme of word.Phonemes) {
       if (!record(phoneme) || typeof phoneme.Phoneme !== "string") continue;
-      const assessment = phoneme.PronunciationAssessment;
       phonemes.push({
         phoneme: phoneme.Phoneme,
-        score: readScore(assessment) ?? 0,
+        score: readScore(phoneme) ?? 0,
         heard: mapHeard(phoneme.NBestPhonemes),
       });
     }
@@ -65,7 +73,7 @@ function mapSyllables(words: unknown): SyllableAssessment[] {
       syllables.push({
         syllable: label,
         pinyin,
-        score: readScore(syllable.PronunciationAssessment) ?? 0,
+        score: readScore(syllable) ?? 0,
       });
     }
   }
@@ -78,21 +86,25 @@ function mapWords(words: unknown): WordAssessment[] {
     .filter(record)
     .map(word => ({
       word: typeof word.Word === "string" ? word.Word : "",
-      score: readScore(word.PronunciationAssessment) ?? 0,
+      score: readScore(word) ?? 0,
     }));
 }
 
 export function mapAzurePronunciationResponse(body: unknown, locale: CoachLocale): AssessmentOk {
-  if (!record(body) || !Array.isArray(body.NBest) || !record(body.NBest[0])) {
+  if (!record(body)) throw new Error("Azure returned an unexpected pronunciation payload.");
+  const status = body.RecognitionStatus;
+  if (typeof status === "string" && status !== "Success") {
+    throw new Error(`Azure recognition status was ${status}.`);
+  }
+  if (!Array.isArray(body.NBest) || !record(body.NBest[0])) {
     throw new Error("Azure returned an unexpected pronunciation payload.");
   }
   const best = body.NBest[0];
-  const pronunciation = record(best.PronunciationAssessment) ? best.PronunciationAssessment : {};
   const words = mapWords(best.Words);
   const base: AssessmentOk = {
     status: "ok",
     words,
-    scores: mapScores(pronunciation),
+    scores: mapScores(best),
   };
   if (locale === "en-US") base.phonemes = mapPhonemes(best.Words);
   else base.syllables = mapSyllables(best.Words);

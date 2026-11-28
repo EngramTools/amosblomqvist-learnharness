@@ -20,6 +20,9 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
   const context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
   const source = context.createMediaStreamSource(options.stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
+  // A ScriptProcessor only runs while it reaches the destination; mute it so the microphone is never monitored.
+  const mute = context.createGain();
+  mute.gain.value = 0;
   const chunks: Float32Array[] = [];
   let finished: Promise<Uint8Array> | undefined;
 
@@ -27,6 +30,7 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
     if (finished) return finished;
     finished = (async () => {
       processor.disconnect();
+      mute.disconnect();
       source.disconnect();
       for (const track of options.stream.getTracks()) track.stop();
       const sampleRate = context.sampleRate;
@@ -49,7 +53,8 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
   };
 
   source.connect(processor);
-  processor.connect(context.destination);
+  processor.connect(mute);
+  mute.connect(context.destination);
   const limitTimer = setTimeout(() => {
     void finish();
     options.onLimit?.();

@@ -97,3 +97,49 @@ test("assess-pronunciation rejects a clip longer than the recording limit", asyn
   );
   cleanup();
 });
+
+test("assess-pronunciation accepts a full clip that captured one extra capture quantum", async () => {
+  const directory = tempDirectory();
+  const stub = await stubSpeechServer((_request, response) => {
+    sendJson(response, 200, { RecognitionStatus: "Success", NBest: [{ AccuracyScore: 80, Words: [] }] });
+  });
+  try {
+    const { call, cleanup } = backendFixture(directory, stub.host);
+    await call("save-settings", { key: "azure-key", region: "westus", targetLanguage: "en-US", firstLanguage: "en" });
+    const wav = encodeWav16kMono(new Float32Array(480_000 + 4096), 16_000);
+    const result = (await call("assess-pronunciation", {
+      wavBase64: Buffer.from(wav).toString("base64"),
+      referenceText: "hello",
+      locale: "en-US",
+    })) as AssessmentResult;
+    assert.equal(result.status, "ok");
+    assert.equal(stub.requests.length, 1);
+    cleanup();
+  } finally {
+    await stub.close();
+  }
+});
+
+test("assess-pronunciation rejects an over-long reference text before contacting Azure", async () => {
+  const directory = tempDirectory();
+  const stub = await stubSpeechServer((_request, response) => {
+    sendJson(response, 200, { RecognitionStatus: "Success", NBest: [{ Words: [] }] });
+  });
+  try {
+    const { call, cleanup } = backendFixture(directory, stub.host);
+    await call("save-settings", { key: "azure-key", region: "westus", targetLanguage: "en-US", firstLanguage: "en" });
+    const wav = encodeWav16kMono(new Float32Array(800), 16_000);
+    await assert.rejects(
+      () => call("assess-pronunciation", {
+        wavBase64: Buffer.from(wav).toString("base64"),
+        referenceText: "hello ".repeat(500),
+        locale: "en-US",
+      }),
+      /reference text/i,
+    );
+    assert.equal(stub.requests.length, 0);
+    cleanup();
+  } finally {
+    await stub.close();
+  }
+});
