@@ -340,7 +340,7 @@ test("a cheap slot whose model is missing from the catalog falls back to the ses
   }
 });
 
-test("a blank fix-wording reply names the model and the missing wording", async () => {
+test("a blank fix-wording reply keeps the scores and names the model in the fix's unavailable reason", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const f = fixture({
     session: claudeSession,
@@ -351,15 +351,16 @@ test("a blank fix-wording reply names the model and the missing wording", async 
   });
   try {
     const result = await f.grade(gradingContext());
-    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
-    assert.equal(result.scoring.reason, "The explain-back model claude-code/sonnet returned no fix wording.");
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected the scores to survive the blank wording reply");
+    if (result.scoring.fix.wording !== undefined) assert.fail("expected the wording to be absent");
+    assert.equal(result.scoring.fix.unavailableReason, "The explain-back model claude-code/sonnet returned no fix wording.");
   } finally {
     f.cleanup();
     await stub.close();
   }
 });
 
-test("a failed fix-wording call on the cheap-slot model names it in the unavailable reason", async () => {
+test("a failed fix-wording call keeps the scores and names the failing model in the fix's unavailable reason", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const f = fixture({
     session: claudeSession,
@@ -370,8 +371,9 @@ test("a failed fix-wording call on the cheap-slot model names it in the unavaila
   });
   try {
     const result = await f.grade(gradingContext());
-    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
-    assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected the scores to survive the wording failure");
+    if (result.scoring.fix.wording !== undefined) assert.fail("expected the wording to be absent");
+    assert.match(result.scoring.fix.unavailableReason!, /claude-code\/sonnet could not write the fix wording/);
   } finally {
     f.cleanup();
     await stub.close();
