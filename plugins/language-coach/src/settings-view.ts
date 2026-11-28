@@ -53,6 +53,14 @@ function failureMessage(error: unknown, key: string): string {
   return key && message.includes(key) ? SAVE_FAILED : message;
 }
 
+/** Run `onEdit` whenever the learner touches one of the inputs. */
+function watchEdits(inputs: (HTMLInputElement | HTMLSelectElement)[], onEdit: () => void): void {
+  for (const input of inputs) {
+    input.addEventListener("input", onEdit);
+    input.addEventListener("change", onEdit);
+  }
+}
+
 function buildForm(document: Document) {
   const fields = {
     key: passwordField(document, SPEECH_KEY_LABEL, "lh-language-coach-key"),
@@ -107,6 +115,10 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
 
   let disposed = false;
   let busy = false;
+  // Once the learner edits, saves or is notified, a late initial load must not overwrite what they see.
+  let newerThanLoad = false;
+  const markNewer = () => { newerThanLoad = true; };
+  watchEdits([fields.key.input, fields.region.input, fields.target.input, fields.first.input], markNewer);
   const isLive = () => !disposed && !signal.aborted;
   const apply = (settings: PublicSettings, profile: CoachProfile) => {
     fields.key.input.placeholder = settings.configured ? "Saved key — enter a new key to replace it" : "Paste an Azure Speech key";
@@ -135,6 +147,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     const profile = readCoachProfile(saved);
     if (!isLive()) return;
     if (key) fields.key.input.value = "";
+    markNewer();
     apply(settings, profile);
     setStatus(key ? "Saved. Clips are sent to Azure for pronunciation assessment." : "Saved.");
   };
@@ -155,10 +168,12 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     }
   };
 
+  const clearResult = () => { recorderUi.details.textContent = ""; };
+
   /** Show the mapped scores and the per-sound or per-syllable detail. */
   const showResult = (result: Record<string, unknown>) => {
     setStatus(assessmentSummary(result));
-    recorderUi.details.textContent = "";
+    clearResult();
     for (const line of assessmentLines(result)) {
       const item = document.createElement("li");
       item.textContent = line;
@@ -173,6 +188,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     buttons: { record: recorderUi.record, stop: recorderUi.stop },
     readInputs: () => ({ referenceText: recorderUi.reference.value.trim(), locale: fields.target.input.value }),
     showResult,
+    clearResult,
   });
 
   form.addEventListener("submit", onSubmit);
@@ -182,7 +198,10 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     if (event.topic !== "settings-changed" || disposed) return;
     try {
       const payload = record(event.data) ? event.data : {};
-      apply(readPublicSettings(payload), readCoachProfile(payload));
+      const settings = readPublicSettings(payload);
+      const profile = readCoachProfile(payload);
+      markNewer();
+      apply(settings, profile);
     } catch {}
   });
 
@@ -201,9 +220,9 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   const initialise = async () => {
     try {
       const [settings, profile] = await loadSettings(ctx);
-      if (isLive()) apply(settings, profile);
+      if (isLive() && !newerThanLoad) apply(settings, profile);
     } catch {
-      if (isLive()) setStatus("The saved settings could not be read.", true);
+      if (isLive() && !newerThanLoad) setStatus("The saved settings could not be read.", true);
     }
   };
   void initialise();

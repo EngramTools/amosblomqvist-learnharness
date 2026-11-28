@@ -44,8 +44,20 @@ class FakeAudioContext {
   destination = { name: "destination" };
   nodes: FakeNode[] = [];
 
+  static initialState: "running" | "suspended" = "running";
+  static resumeWorks = true;
+  state: "running" | "suspended" | "closed" = FakeAudioContext.initialState;
+  resumes = 0;
+  closed = false;
+
   constructor() {
     contexts.push(this);
+  }
+
+  resume(): Promise<void> {
+    this.resumes += 1;
+    if (FakeAudioContext.resumeWorks) this.state = "running";
+    return Promise.resolve();
   }
 
   createMediaStreamSource(): FakeNode {
@@ -74,13 +86,17 @@ class FakeAudioContext {
   }
 
   close(): Promise<void> {
+    this.closed = true;
+    this.state = "closed";
     return Promise.resolve();
   }
 }
 
-function installAudioContext(): () => void {
+function installAudioContext(options: { suspended?: boolean; resumeWorks?: boolean } = {}): () => void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
   contexts.length = 0;
+  FakeAudioContext.initialState = options.suspended ? "suspended" : "running";
+  FakeAudioContext.resumeWorks = options.resumeWorks ?? true;
   Object.defineProperty(globalThis, "AudioContext", { value: FakeAudioContext, configurable: true, writable: true });
   return () => {
     Object.defineProperty(globalThis, "AudioContext", previous ?? { value: undefined, configurable: true, writable: true });
@@ -101,7 +117,36 @@ test("the recorder routes the microphone through a muted node instead of the spe
     assert.deepEqual(processor.connectedTo, ["gain"]);
     assert.deepEqual(gain.connectedTo, ["destination"]);
     assert.equal(gain.gain.value, 0);
+    assert.equal(context.resumes, 0);
     await recorder.stop();
+  } finally {
+    restore();
+  }
+});
+
+test("a context the autoplay policy left suspended is resumed before capture starts", async () => {
+  const restore = installAudioContext({ suspended: true });
+  try {
+    const recorder = await startRecorder({ stream: fakeStream() });
+    const context = contexts[0]!;
+    assert.equal(context.resumes, 1);
+    assert.equal(context.state, "running");
+    await recorder.stop();
+  } finally {
+    restore();
+  }
+});
+
+test("a context that stays suspended fails with a readable error instead of recording silence", async () => {
+  const restore = installAudioContext({ suspended: true, resumeWorks: false });
+  try {
+    let stops = 0;
+    const stream = { getTracks: () => [{ stop() { stops += 1; } }] } as unknown as MediaStream;
+    await assert.rejects(startRecorder({ stream }), /kept audio capture paused/);
+    assert.equal(contexts[0]!.resumes, 1);
+    assert.equal(contexts[0]!.closed, true);
+    assert.equal(stops, 1);
+    assert.equal(contexts[0]!.nodes.length, 0);
   } finally {
     restore();
   }

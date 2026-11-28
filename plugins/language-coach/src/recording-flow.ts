@@ -1,4 +1,4 @@
-import { startRecorder, type RecorderHandle } from "./recorder.ts";
+import { startRecorder, stopTracks, type RecorderHandle } from "./recorder.ts";
 
 export type RecordingDeps = {
   call: (operation: string, input?: unknown) => Promise<unknown>;
@@ -7,7 +7,11 @@ export type RecordingDeps = {
   buttons: { record: HTMLButtonElement; stop: HTMLButtonElement };
   readInputs: () => { referenceText: string; locale: string };
   showResult: (result: Record<string, unknown>) => void;
+  /** Remove the previous attempt's scores and details. */
+  clearResult: () => void;
 };
+
+const NEEDS_REFERENCE = "Enter the reference text before recording.";
 
 type Phase = "idle" | "starting" | "recording" | "stopping";
 
@@ -18,11 +22,6 @@ function bytesToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
   }
   return btoa(binary);
-}
-
-/** Release the microphone when the capture never started or must not continue. */
-function stopTracks(stream: MediaStream): void {
-  for (const track of stream.getTracks()) track.stop();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,6 +63,10 @@ export function createRecordingFlow(deps: RecordingDeps) {
 
   const start = async () => {
     if (!isLive() || phase !== "idle") return;
+    if (!deps.readInputs().referenceText) {
+      setStatus(NEEDS_REFERENCE, true);
+      return;
+    }
     phase = "starting";
     let stream: MediaStream | undefined;
     try {
@@ -81,9 +84,10 @@ export function createRecordingFlow(deps: RecordingDeps) {
   const assess = async (wav: Uint8Array) => {
     const { referenceText, locale } = deps.readInputs();
     if (!referenceText) {
-      setStatus("Enter reference text before assessing a recording.", true);
+      setStatus(NEEDS_REFERENCE, true);
       return;
     }
+    setStatus("Assessing pronunciation…");
     const result = await call("assess-pronunciation", { wavBase64: bytesToBase64(wav), referenceText, locale });
     if (isLive()) present(result);
   };
@@ -95,6 +99,8 @@ export function createRecordingFlow(deps: RecordingDeps) {
     if (!active || !canStop()) return;
     phase = "stopping";
     buttons.stop.disabled = true;
+    deps.clearResult();
+    setStatus("Encoding the recording…");
     try {
       const wav = await active.stop();
       recorder = undefined;

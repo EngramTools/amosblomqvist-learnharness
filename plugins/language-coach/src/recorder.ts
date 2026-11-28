@@ -14,10 +14,27 @@ export type RecorderOptions = {
   onLimit?: () => void;
 };
 
+/** Release the microphone when the capture never started or must not continue. */
+export function stopTracks(stream: MediaStream): void {
+  for (const track of stream.getTracks()) track.stop();
+}
+
+/** A context the autoplay policy left suspended records silence, so it must be running before capture starts. */
+async function openRunningContext(): Promise<AudioContext> {
+  const context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+  if (context.state === "suspended") await context.resume().catch(() => {});
+  if (context.state === "running") return context;
+  await context.close().catch(() => {});
+  throw new Error("The browser kept audio capture paused, so nothing would be recorded. Click Record again.");
+}
+
 /** Capture microphone audio until stop or the 30 s limit. */
 export async function startRecorder(options: RecorderOptions): Promise<RecorderHandle> {
   const limitMs = options.limitMs ?? RECORDING_LIMIT_MS;
-  const context = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
+  const context = await openRunningContext().catch(error => {
+    stopTracks(options.stream);
+    throw error;
+  });
   const source = context.createMediaStreamSource(options.stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
   // A ScriptProcessor only runs while it reaches the destination; mute it so the microphone is never monitored.
@@ -32,7 +49,7 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
       processor.disconnect();
       mute.disconnect();
       source.disconnect();
-      for (const track of options.stream.getTracks()) track.stop();
+      stopTracks(options.stream);
       const sampleRate = context.sampleRate;
       await context.close();
       const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
@@ -56,7 +73,8 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
   processor.connect(mute);
   mute.connect(context.destination);
   const limitTimer = setTimeout(() => {
-    void finish();
+    // stop() returns the same promise, so a failure still reaches the caller that finishes the clip.
+    finish().catch(() => {});
     options.onLimit?.();
   }, limitMs);
 
