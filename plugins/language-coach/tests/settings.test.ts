@@ -9,7 +9,7 @@ type Mount = (container: HTMLElement, signal: AbortSignal) => void | PluginClean
 
 type Call = { operation: string; input: unknown };
 
-function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
+function fixture(options: { failSave?: boolean; rejectWithKey?: string; assessment?: unknown } = {}) {
   const { document } = parseHTML("<!doctype html><html><body></body></html>");
   const calls: Call[] = [];
   let mount: Mount | undefined;
@@ -22,6 +22,7 @@ function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
       if (options.failSave) {
         throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The settings could not be saved.");
       }
+      if (operation === "assess-pronunciation") return options.assessment ?? { status: "unavailable", reason: "The pronunciation assessment is unavailable." };
       return { configured: true, region: "westus", targetLanguage: "en-US", firstLanguage: "en" };
     },
     onNotification(listener: (event: { topic: string; data: unknown }) => void) {
@@ -40,6 +41,54 @@ function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
 
 async function flush(): Promise<void> {
   for (let pending = 0; pending < 5; pending++) await Promise.resolve();
+}
+
+/** Drain the promise chain of the view, including awaited recorder work. */
+async function settle(): Promise<void> {
+  for (let round = 0; round < 3; round++) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    await promise;
+  }
+}
+
+function button(container: HTMLElement, label: string): Element {
+  const found = Array.from(container.querySelectorAll("button")).find(item => item.textContent === label);
+  assert.ok(found, `The ${label} button is missing.`);
+  return found!;
+}
+
+function click(document: Document, element: Element): void {
+  const event = document.createEvent("Event");
+  event.initEvent("click", true, true);
+  element.dispatchEvent(event);
+}
+
+function fakeStream(): MediaStream {
+  return { getTracks: () => [{ stop() {} }] } as unknown as MediaStream;
+}
+
+/** Stand in for the browser APIs the recorder needs. */
+function installRecorderGlobals(options: { getUserMedia: () => Promise<MediaStream>; failClose?: boolean }): () => void {
+  const audioContext = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const browserNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  class FakeAudioContext {
+    sampleRate = 16_000;
+    destination = {};
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createScriptProcessor() { return { connect() {}, disconnect() {}, onaudioprocess: null }; }
+    close() { return options.failClose ? Promise.reject(new Error("The audio context could not be closed.")) : Promise.resolve(); }
+  }
+  Object.defineProperty(globalThis, "AudioContext", { value: FakeAudioContext, configurable: true, writable: true });
+  Object.defineProperty(globalThis, "navigator", {
+    value: { mediaDevices: { getUserMedia: options.getUserMedia } },
+    configurable: true,
+    writable: true,
+  });
+  return () => {
+    Object.defineProperty(globalThis, "AudioContext", audioContext ?? { value: undefined, configurable: true, writable: true });
+    if (browserNavigator) Object.defineProperty(globalThis, "navigator", browserNavigator);
+  };
 }
 
 test("activation registers the settings mount", () => {
@@ -101,4 +150,103 @@ test("a save failure never echoes the key into the status", async () => {
   assert.match(container.textContent!, /The settings could not be saved\./);
   assert.equal(container.textContent!.includes(key), false);
   controller.abort();
+});
+
+function setReference(container: HTMLElement, text: string): void {
+  const input = container.querySelector('input[placeholder="Reference text to read aloud"]') as HTMLInputElement;
+  assert.ok(input, "The reference text input is missing.");
+  input.value = text;
+}
+
+test("a failed stop leaves the recorder ready for another recording", async () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.mount!(container, controller.signal);
+  await flush();
+
+  let requests = 0;
+  const restore = installRecorderGlobals({
+    getUserMedia: async () => {
+      requests += 1;
+      return fakeStream();
+    },
+    failClose: true,
+  });
+  try {
+    click(f.document, button(container, "Record"));
+    await settle();
+    assert.equal(requests, 1);
+
+    click(f.document, button(container, "Stop"));
+    await settle();
+    assert.match(container.textContent!, /could not be closed/);
+
+    click(f.document, button(container, "Record"));
+    await settle();
+    assert.equal(requests, 2);
+  } finally {
+    restore();
+    controller.abort();
+  }
+});
+
+test("the recording limit ends the clip and assesses it without pressing Stop", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture({ assessment: { status: "ok", scores: { accuracy: 88 }, words: [] } });
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.mount!(container, controller.signal);
+  await flush();
+  setReference(container, "think");
+
+  const restore = installRecorderGlobals({ getUserMedia: async () => fakeStream() });
+  try {
+    click(f.document, button(container, "Record"));
+    await settle();
+    assert.equal(f.calls.some(call => call.operation === "assess-pronunciation"), false);
+
+    t.mock.timers.tick(30_000);
+    await settle();
+    assert.equal(f.calls.some(call => call.operation === "assess-pronunciation"), true);
+    assert.match(container.textContent!, /Accuracy 88/);
+  } finally {
+    restore();
+    controller.abort();
+    t.mock.timers.reset();
+  }
+});
+
+test("the assessment result shows the mapped scores and pronunciation details", async () => {
+  const f = fixture({
+    assessment: {
+      status: "ok",
+      scores: { accuracy: 88, fluency: 90, completeness: 95, prosody: 72 },
+      words: [{ word: "think", score: 70 }],
+      phonemes: [{ phoneme: "θ", score: 42, heard: ["s", "θ"] }],
+    },
+  });
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.mount!(container, controller.signal);
+  await flush();
+  setReference(container, "think");
+
+  const restore = installRecorderGlobals({ getUserMedia: async () => fakeStream() });
+  try {
+    click(f.document, button(container, "Record"));
+    await settle();
+    click(f.document, button(container, "Stop"));
+    await settle();
+
+    assert.match(container.textContent!, /Assessment received\. Accuracy 88, Fluency 90, Completeness 95, Prosody 72\./);
+    assert.match(container.textContent!, /think — 70/);
+    assert.match(container.textContent!, /θ — 42 \(heard: s, θ\)/);
+  } finally {
+    restore();
+    controller.abort();
+  }
 });

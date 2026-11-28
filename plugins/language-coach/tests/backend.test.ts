@@ -85,3 +85,15 @@ test("assess-pronunciation routes through the registered backend handler", async
     await stub.close();
   }
 });
+
+test("assess-pronunciation rejects a clip longer than the recording limit", async () => {
+  const directory = tempDirectory();
+  const { call, cleanup } = backendFixture(directory);
+  await call("save-settings", { key: "azure-key", region: "westus", targetLanguage: "en-US", firstLanguage: "en" });
+  const oversized = Buffer.alloc(1_000_000).toString("base64");
+  await assert.rejects(
+    () => call("assess-pronunciation", { wavBase64: oversized, referenceText: "hello", locale: "en-US" }),
+    /longer than the 30-second limit/,
+  );
+  cleanup();
+});

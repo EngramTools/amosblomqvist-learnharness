@@ -1,6 +1,6 @@
 import type { PluginFrontendContext } from "learnharness-plugin-api";
 import type { CoachLocale } from "./judge-types.ts";
-import { RECORDING_LIMIT_MS, startRecorder } from "./recorder.ts";
+import { RECORDING_LIMIT_MS, startRecorder, type RecorderHandle } from "./recorder.ts";
 
 type SettingsContext = Pick<PluginFrontendContext, "call" | "onNotification">;
 
@@ -94,7 +94,9 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   stopButton.textContent = "Stop";
   stopButton.disabled = true;
   const recorderNote = note(document, `Recording stops automatically after ${RECORDING_LIMIT_MS / 1000} seconds.`);
-  recorderSection.append(recorderTitle, referenceInput, recordButton, stopButton, recorderNote);
+  const details = document.createElement("ul");
+  details.className = "lh-language-coach-settings__details";
+  recorderSection.append(recorderTitle, referenceInput, recordButton, stopButton, recorderNote, details);
 
   form.append(keyField.field, keyNote, regionField.field, targetField.field, firstField.field, actions, status);
   root.append(form, recorderSection);
@@ -102,7 +104,8 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
 
   let disposed = false;
   let busy = false;
-  let recorder: Awaited<ReturnType<typeof startRecorder>> | undefined;
+  let stopping = false;
+  let recorder: RecorderHandle | undefined;
 
   const isLive = () => !disposed && !signal.aborted;
   const apply = (settings: PublicSettings, profile: CoachProfile) => {
@@ -152,7 +155,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     if (!isLive() || recorder) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
-      recorder = await startRecorder({ stream });
+      recorder = await startRecorder({ stream, onLimit: () => { void stopRecording(); } });
       recordButton.disabled = true;
       stopButton.disabled = false;
       setStatus("Recording…");
@@ -162,10 +165,12 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   };
 
   const stopRecording = async () => {
-    if (!recorder || !isLive()) return;
+    if (!recorder || !isLive() || stopping) return;
+    stopping = true;
     stopButton.disabled = true;
+    const active = recorder;
     try {
-      const wav = await recorder.stop();
+      const wav = await active.stop();
       recorder = undefined;
       recordButton.disabled = false;
       const referenceText = referenceInput.value.trim();
@@ -179,17 +184,41 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
         locale: targetField.input.value,
       });
       if (!isLive()) return;
-      if (record(result) && result.status === "unavailable") {
-        setStatus(result.reason as string, true);
+      if (!record(result)) {
+        setStatus("The assessment result could not be read.", true);
         return;
       }
-      setStatus("Assessment received.");
+      if (result.status === "unavailable") {
+        setStatus(typeof result.reason === "string" ? result.reason : "The pronunciation assessment is unavailable.", true);
+        return;
+      }
+      renderAssessment(result);
     } catch (error) {
+      recorder = undefined;
       if (!isLive()) return;
       setStatus(error instanceof Error ? error.message : "The recording could not be assessed.", true);
     } finally {
+      stopping = false;
       recordButton.disabled = false;
       stopButton.disabled = true;
+    }
+  };
+
+  /** Show the mapped scores and the per-sound or per-syllable detail. */
+  const renderAssessment = (result: Record<string, unknown>) => {
+    const scores = record(result.scores) ? result.scores : {};
+    const summary: string[] = [];
+    for (const label of ["accuracy", "fluency", "completeness", "prosody"]) {
+      const score = readNumber(scores[label]);
+      if (score === undefined) continue;
+      summary.push(`${label.charAt(0).toUpperCase()}${label.slice(1)} ${score}`);
+    }
+    setStatus(summary.length ? `Assessment received. ${summary.join(", ")}.` : "Assessment received.");
+    details.textContent = "";
+    for (const line of assessmentLines(result)) {
+      const item = document.createElement("li");
+      item.textContent = line;
+      details.append(item);
     }
   };
 
@@ -229,6 +258,33 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   })();
 
   return dispose;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+/** One readable line per scored word, phoneme or syllable. */
+function assessmentLines(result: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const push = (values: unknown, label: (entry: Record<string, unknown>) => string, extra?: (entry: Record<string, unknown>) => string) => {
+    if (!Array.isArray(values)) return;
+    for (const entry of values) {
+      if (!record(entry)) continue;
+      lines.push(`${label(entry)} — ${readNumber(entry.score) ?? 0}${extra ? extra(entry) : ""}`);
+    }
+  };
+  push(result.words, entry => readText(entry.word));
+  push(result.phonemes, entry => readText(entry.phoneme), entry => {
+    const heard = Array.isArray(entry.heard) ? entry.heard.filter(item => typeof item === "string") : [];
+    return heard.length ? ` (heard: ${heard.join(", ")})` : "";
+  });
+  push(result.syllables, entry => readText(entry.pinyin) || readText(entry.syllable));
+  return lines;
 }
 
 function note(document: Document, text: string): HTMLParagraphElement {

@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assess } from "../src/azure-judge.ts";
+import { buildPronunciationAssessmentHeader } from "../src/pronunciation-header.ts";
 import { encodeWav16kMono } from "../src/wav-encoder.ts";
 import { sendJson, stubSpeechServer } from "./support/http-stub.ts";
 
@@ -112,4 +113,42 @@ test("assess returns unavailable on Azure HTTP errors and timeouts", async () =>
     timeoutMs: 25,
   });
   assert.deepEqual(timeoutResult, { status: "unavailable", reason: "Azure pronunciation assessment timed out." });
+});
+
+test("assess returns unavailable when Azure sends an unreadable body", async () => {
+  const stub = await stubSpeechServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{ not json");
+  });
+  stubs.push(stub);
+
+  const result = await assess(sampleClip(), "hello", "en-US", {
+    subscriptionKey: "azure-key",
+    region: "westus",
+    endpointBase: stub.host,
+  });
+  assert.equal(result.status, "unavailable");
+});
+
+test("assess returns unavailable when the response body times out", async () => {
+  const stub = await stubSpeechServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.write("{\"NBest\":");
+  });
+  stubs.push(stub);
+
+  const result = await assess(sampleClip(), "hello", "en-US", {
+    subscriptionKey: "azure-key",
+    region: "westus",
+    endpointBase: stub.host,
+    timeoutMs: 50,
+  });
+  assert.deepEqual(result, { status: "unavailable", reason: "Azure pronunciation assessment timed out." });
+});
+
+test("the pronunciation header keeps non-ASCII reference text as ASCII JSON", () => {
+  const header = buildPronunciationAssessmentHeader("你好 😀", "zh-CN");
+  assert.match(header, /^[\x20-\x7e]*$/);
+  const parsed = JSON.parse(header) as { ReferenceText: string };
+  assert.equal(parsed.ReferenceText, "你好 😀");
 });

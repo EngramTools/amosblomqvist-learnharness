@@ -27,12 +27,11 @@ export function buildPronunciationAssessmentHeader(referenceText: string, locale
 
 /** HTTP headers must stay ASCII; Azure accepts JSON with \\u escapes in ReferenceText. */
 function toAsciiJson(value: unknown): string {
-  return JSON.stringify(value).replace(/[^\u0020-\u007e]/g, character => {
-    const code = character.charCodeAt(0);
+  return JSON.stringify(value).replace(/[^\u0020-\u007e]/gu, character => {
+    const code = character.codePointAt(0) ?? 0;
     if (code <= 0xffff) return `\\u${code.toString(16).padStart(4, "0")}`;
-    const first = character.charCodeAt(0);
-    const second = character.charCodeAt(1);
-    const combined = (first - 0xd800) * 0x400 + (second - 0xdc00) + 0x10000;
-    return `\\u${combined.toString(16).padStart(4, "0")}`;
+    const first = 0xd800 + ((code - 0x10000) >> 10);
+    const second = 0xdc00 + ((code - 0x10000) & 0x3ff);
+    return `\\u${first.toString(16).padStart(4, "0")}\\u${second.toString(16).padStart(4, "0")}`;
   });
 }

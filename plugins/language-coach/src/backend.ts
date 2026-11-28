@@ -1,6 +1,7 @@
 import type { PluginBackendContext } from "learnharness-plugin-api";
 import type { AssessmentResult, CoachLocale } from "./judge-types.ts";
 import { assess, createAzureJudge, type AzureJudgeRuntime } from "./azure-judge.ts";
+import { RECORDING_LIMIT_MS } from "./recorder.ts";
 import {
   loadSettings,
   normalizeFirstLanguage,
@@ -19,12 +20,17 @@ export type LanguageCoachBackendOptions = {
   judge?: AzureJudgeRuntime;
 };
 
+/** 30 s of 16 kHz mono 16-bit PCM plus the WAV header. */
+const MAX_CLIP_BYTES = (RECORDING_LIMIT_MS / 1000) * 16_000 * 2 + 44;
+
 function decodeClip(input: unknown): Uint8Array {
   if (!record(input) || typeof input.wavBase64 !== "string") throw new Error("Expected a recorded WAV clip.");
   const trimmed = input.wavBase64.trim();
   if (!trimmed) throw new Error("The recorded clip is empty.");
+  if (trimmed.length > Math.ceil(MAX_CLIP_BYTES / 3) * 4) throw new Error("The recorded clip is longer than the 30-second limit.");
   const bytes = Buffer.from(trimmed, "base64");
   if (!bytes.length) throw new Error("The recorded clip is empty.");
+  if (bytes.length > MAX_CLIP_BYTES) throw new Error("The recorded clip is longer than the 30-second limit.");
   return new Uint8Array(bytes);
 }
 

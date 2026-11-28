@@ -10,6 +10,8 @@ export type RecorderHandle = {
 export type RecorderOptions = {
   stream: MediaStream;
   limitMs?: number;
+  /** Called when the time limit ends the capture, so the view can finish the clip. */
+  onLimit?: () => void;
 };
 
 /** Capture microphone audio until stop or the 30 s limit. */
@@ -48,7 +50,10 @@ export async function startRecorder(options: RecorderOptions): Promise<RecorderH
 
   source.connect(processor);
   processor.connect(context.destination);
-  const limitTimer = setTimeout(() => { void finish(); }, limitMs);
+  const limitTimer = setTimeout(() => {
+    void finish();
+    options.onLimit?.();
+  }, limitMs);
 
   return {
     stop: async () => {

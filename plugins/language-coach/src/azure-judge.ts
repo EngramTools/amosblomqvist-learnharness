@@ -62,7 +62,12 @@ export function createAzureJudge(options: AzureJudgeOptions): PronunciationJudge
           await discardBody(response);
           return unavailable(`Azure pronunciation assessment failed (${response.status}).`);
         }
-        const body: unknown = await response.json();
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch {
+          return unavailable(timedOut ? "Azure pronunciation assessment timed out." : "Azure returned an unreadable pronunciation payload.");
+        }
         try {
           return mapAzurePronunciationResponse(body, locale);
         } catch {
