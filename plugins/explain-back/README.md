@@ -88,9 +88,10 @@ model that ran (for example, "The explain-back model claude-code/sonnet could no
 wording."), so the model that actually graded is visible on the answered card. Every newer
 result also records `gradedBy` (`provider/id` of the model that ran the literal reader); the
 answered card shows it on ok results and unavailable scoring. Literal-reader timeout,
-provider stop, empty-text, and invalid-result errors name the model in their messages
-("The literal reader (claude-code/sonnet) could not finish: …"); raw provider exceptions
-and unreadable-JSON errors retain their original diagnostic text. Results saved before this
+provider stop, empty-text, invalid-result, and unreadable-JSON errors name the model in their
+messages ("The literal reader (claude-code/sonnet) could not finish: …"); a raw provider
+exception is wrapped the same way and keeps its own text ("The literal reader
+(claude-code/sonnet) failed: Provider connection failed."). Results saved before this
 field existed show no model line. The literal
 reconstruction and gaps remain unchanged, and no scores or fix are shown. With no key, scoring
 is also unavailable; the plugin never substitutes model-produced scores.

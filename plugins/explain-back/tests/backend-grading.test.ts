@@ -16,7 +16,7 @@ import type {
 import { activate } from "../src/backend.ts";
 import type { ExplainBackAnswer, ExplainBackPayload, ExplainBackResult } from "../src/contract.ts";
 import { GAP_KINDS, literalReaderInstructions, type GapKind } from "../src/contract.ts";
-import { fixWordingInstructions, type JevRuntime } from "../src/grader.ts";
+import { fixWordingInstructions, MODEL_CALL_TIMEOUT_MS, type JevRuntime } from "../src/grader.ts";
 import { sendJson, stubJsonServer } from "./support/http-stub.ts";
 
 type Grade = (context: PluginQuestionGradingContext<ExplainBackPayload, ExplainBackAnswer>) => Promise<ExplainBackResult>;
@@ -247,15 +247,18 @@ test("accepts a fenced JSON reply and rejects unreadable or invalid results", as
   assert.deepEqual(await fenced.grade(gradingContext()), { ...gradedPayload, scoring: noKeyScoring, delivery: typedDelivery, gradedBy: "test/default-model" });
 
   const invalidKind = fixture({ complete: async () => reply(JSON.stringify({ ...gradedPayload, gaps: [{ kind: "missing premise", detail: "Something" }] })) });
-  await assert.rejects(invalidKind.grade(gradingContext()), /invalid result/i);
+  await assert.rejects(invalidKind.grade(gradingContext()), /literal reader \(test\/default-model\) returned an invalid result\./);
 
   const unreadable = fixture({ complete: async () => reply("I could not read that.") });
-  await assert.rejects(unreadable.grade(gradingContext()), /readable JSON/i);
+  await assert.rejects(unreadable.grade(gradingContext()), /literal reader \(test\/default-model\) returned no readable JSON\./);
+
+  const blank = fixture({ complete: async () => reply("   ") });
+  await assert.rejects(blank.grade(gradingContext()), /literal reader \(test\/default-model\) returned no text\./);
 });
 
 test("a failed model call rejects so the host saves the answer with a readable grading error", async () => {
   const f = fixture({ complete: async () => { throw new Error("Provider connection failed."); } });
-  await assert.rejects(f.grade(gradingContext()), /Provider connection failed\./);
+  await assert.rejects(f.grade(gradingContext()), /The literal reader \(test\/default-model\) failed: Provider connection failed\./);
 
   const truncated = fixture({ complete: async () => reply("{\"version\":1", "error") });
   await assert.rejects(truncated.grade(gradingContext()), /literal reader \(test\/default-model\) could not finish: The provider refused the request\./);
@@ -346,7 +349,7 @@ test("a cheap slot whose model is missing from the catalog falls back to the ses
   }
 });
 
-test("a blank fix-wording reply names the model and the missing wording", async () => {
+test("a blank fix-wording reply keeps the scores and names the model in the fix's unavailable reason", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const f = fixture({
     session: claudeSession,
@@ -357,15 +360,16 @@ test("a blank fix-wording reply names the model and the missing wording", async 
   });
   try {
     const result = await f.grade(gradingContext());
-    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
-    assert.equal(result.scoring.reason, "The explain-back model claude-code/sonnet returned no fix wording.");
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected the scores to survive the blank wording reply");
+    if (result.scoring.fix.wording !== undefined) assert.fail("expected the wording to be absent");
+    assert.equal(result.scoring.fix.unavailableReason, "The explain-back model claude-code/sonnet returned no fix wording.");
   } finally {
     f.cleanup();
     await stub.close();
   }
 });
 
-test("a failed fix-wording call on the cheap-slot model names it in the unavailable reason", async () => {
+test("a failed fix-wording call keeps the scores and names the failing model in the fix's unavailable reason", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const f = fixture({
     session: claudeSession,
@@ -376,8 +380,9 @@ test("a failed fix-wording call on the cheap-slot model names it in the unavaila
   });
   try {
     const result = await f.grade(gradingContext());
-    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
-    assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected the scores to survive the wording failure");
+    if (result.scoring.fix.wording !== undefined) assert.fail("expected the wording to be absent");
+    assert.match(result.scoring.fix.unavailableReason!, /claude-code\/sonnet could not write the fix wording/);
   } finally {
     f.cleanup();
     await stub.close();
@@ -418,12 +423,55 @@ test("a reader error names the model that ran", async () => {
 
 test("a hung literal-reader call times out as a grading error", async () => {
   const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}), modelCallTimeoutMs: 250 });
-  await assert.rejects(f.grade(gradingContext()), /literal reader \(test\/default-model\) call timed out after 0 seconds\./);
+  await assert.rejects(f.grade(gradingContext()), /^Error: The literal reader \(test\/default-model\) call timed out after 0 seconds\.$/);
   assert.equal(f.requests[0]!.signal?.aborted, true);
   f.cleanup();
 });
 
-test("a hung fix-wording call marks scoring unavailable instead of hanging", async () => {
+test("a raw provider exception that is not an Error still names the model", async () => {
+  const thrownString = fixture({ complete: async () => { throw "connection reset"; } });
+  await assert.rejects(thrownString.grade(gradingContext()), /The literal reader \(test\/default-model\) failed: connection reset$/);
+
+  const thrownObject = fixture({ complete: async () => { throw { code: 503 }; } });
+  await assert.rejects(thrownObject.grade(gradingContext()), /The literal reader \(test\/default-model\) failed: \[object Object\]$/);
+
+  const thrownBlank = fixture({ complete: async () => { throw new Error("  "); } });
+  await assert.rejects(thrownBlank.grade(gradingContext()), /^Error: The literal reader \(test\/default-model\) failed\.$/);
+});
+
+test("a literal-reader call without a timeout override gives up after 60 seconds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}) });
+  let settled = false;
+  const outcome = assert.rejects(f.grade(gradingContext()), /^Error: The literal reader \(test\/default-model\) call timed out after 60 seconds\.$/);
+  void outcome.then(() => { settled = true; });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  t.mock.timers.tick(59_999);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  t.mock.timers.tick(1);
+  await outcome;
+  assert.equal(MODEL_CALL_TIMEOUT_MS, 60_000);
+  f.cleanup();
+});
+
+test("aborting the submission aborts the signal the host model call receives", async () => {
+  const parent = new AbortController();
+  const f = fixture({
+    complete: request => new Promise<AssistantMessage>((_resolve, reject) => {
+      request.signal!.addEventListener("abort", () => reject(request.signal!.reason), { once: true });
+    }),
+  });
+  const outcome = assert.rejects(f.grade(gradingContext(parent.signal)));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(f.requests[0]!.signal?.aborted, false);
+  parent.abort();
+  assert.equal(f.requests[0]!.signal?.aborted, true);
+  await outcome;
+  f.cleanup();
+});
+
+test("a hung fix-wording call keeps the scores and names the model in the fix's unavailable reason", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevReply));
   const hanging = fixture({
     session: claudeSession,
@@ -440,8 +488,9 @@ test("a hung fix-wording call marks scoring unavailable instead of hanging", asy
   });
   try {
     const result = await hanging.grade(gradingContext());
-    if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
-    assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
+    if (!result.scoring || result.scoring.status !== "ok") assert.fail("expected the scores to survive the hung wording call");
+    if (result.scoring.fix.wording !== undefined) assert.fail("expected the wording to be absent");
+    assert.match(result.scoring.fix.unavailableReason!, /claude-code\/sonnet could not write the fix wording/);
     assert.equal(result.reconstruction, gradedPayload.reconstruction);
     assert.equal(hanging.requests[1]!.signal?.aborted, true);
     assert.equal(hanging.requests[0]!.signal?.aborted, false);

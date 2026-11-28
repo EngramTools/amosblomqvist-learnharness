@@ -30,24 +30,41 @@ function readPauseThreshold(input: unknown): number {
 
 const settingsFile = (directory: string) => path.join(directory, "settings.json");
 
+const SETTINGS_FILE_DESCRIPTION = "the explain-back settings file";
+
 function loadSettings(directory: string): Settings {
+  let raw: string;
   try {
-    const value: unknown = JSON.parse(fs.readFileSync(settingsFile(directory), "utf8"));
-    if (!record(value)) return {};
-    const settings: Settings = {};
-    if (typeof value.typesafeApiKey === "string") {
-      const key = value.typesafeApiKey.trim();
-      if (key) settings.typesafeApiKey = key;
-    }
-    if (typeof value.interviewMode === "boolean") settings.interviewMode = value.interviewMode;
-    if (typeof value.pauseThresholdSeconds === "number" && Number.isFinite(value.pauseThresholdSeconds)
-      && value.pauseThresholdSeconds >= PAUSE_THRESHOLD_MIN_SECONDS && value.pauseThresholdSeconds <= PAUSE_THRESHOLD_MAX_SECONDS) {
-      settings.pauseThresholdSeconds = value.pauseThresholdSeconds;
-    }
-    return settings;
+    raw = fs.readFileSync(settingsFile(directory), "utf8");
+  } catch (error) {
+    // A missing settings file is the first-run case: an absent key store means no key.
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") return {};
+    // Never interpolate the read failure: its message can quote the settings
+    // file (and therefore a stored key) into the activation error.
+    throw new Error(`Could not read ${SETTINGS_FILE_DESCRIPTION}.`);
+  }
+  const value: unknown = parseJson(raw);
+  if (!record(value)) throw new Error(`${SETTINGS_FILE_DESCRIPTION} is corrupt: it does not contain a settings object.`);
+  const settings: Settings = {};
+  if (typeof value.typesafeApiKey === "string") {
+    const key = value.typesafeApiKey.trim();
+    if (key) settings.typesafeApiKey = key;
+  }
+  if (typeof value.interviewMode === "boolean") settings.interviewMode = value.interviewMode;
+  if (typeof value.pauseThresholdSeconds === "number" && Number.isFinite(value.pauseThresholdSeconds)
+    && value.pauseThresholdSeconds >= PAUSE_THRESHOLD_MIN_SECONDS && value.pauseThresholdSeconds <= PAUSE_THRESHOLD_MAX_SECONDS) {
+    settings.pauseThresholdSeconds = value.pauseThresholdSeconds;
+  }
+  return settings;
+}
+
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
   } catch {
-    // Scoring is optional: an absent or unreadable key store means no key.
-    return {};
+    // JSON.parse's message can quote the corrupt source, including a stored
+    // key; activation exposes only a generic corrupt-file message.
+    throw new Error(`${SETTINGS_FILE_DESCRIPTION} is corrupt: it does not contain valid JSON.`);
   }
 }
 
