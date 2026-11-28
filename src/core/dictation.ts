@@ -102,8 +102,9 @@ export interface DictatedSpeech {
 
 export interface DeepgramListenOptions {
 	/** Ask Deepgram to keep filler words (disfluencies such as uh, um, mhmm)
-	 *  as normal words instead of dropping them — nova family, English only.
-	 *  Never requested for other languages. */
+	 *  as normal words instead of dropping them — nova family, monolingual
+	 *  English only. Never requested for other languages, multilingual mode
+	 *  included (its documented language set differs). */
 	readonly fillerWords?: boolean;
 }
 
@@ -117,9 +118,9 @@ export function deepgramListenUrl(language: DictationLanguage, options: Deepgram
 		`&language=${encodeURIComponent(language)}${filler}`;
 }
 
-/** Filler words are documented for nova-family English models only; every
- *  monolingual/multilingual code this build offers is nova-3, so the
- *  language prefix is the whole gate. */
+/** Filler words are documented for nova-family English models only. Every
+ *  monolingual code this build offers is nova-3; `multi` is a distinct
+ *  multilingual mode, so it is deliberately not English here. */
 export function isEnglishDictationLanguage(language: DictationLanguage): boolean {
-	return language === "multi" || language === "en" || language.startsWith("en-");
+	return language === "en" || language.startsWith("en-");
 }

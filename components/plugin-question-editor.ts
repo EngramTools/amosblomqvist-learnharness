@@ -42,6 +42,20 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		try { old?.dispose(); } catch { /* unavailable host fallback already owns the surface */ }
 		options.changed();
 	}
+	async function appendText(text: string) {
+		if (!current || !handle?.appendTranscript) return;
+		const adopted = handle;
+		try { await adopted.appendTranscript!(text); } catch { fail(); }
+	}
+	async function appendSpeechValue(speech: DictatedSpeech) {
+		if (!current || !handle) return;
+		const adopted = handle;
+		if (typeof adopted.appendDictatedSpeech === "function") {
+			try { await adopted.appendDictatedSpeech(speech); } catch { fail(); }
+			return;
+		}
+		await appendText(speech.text);
+	}
 	return {
 		props,
 		adopt(next: H) {
@@ -57,32 +71,38 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		update(state: PluginQuestionAnswerState, active: boolean) { if (current && handle) try { options.update(handle, state, active); } catch { fail(); } },
 		focus() { if (current && handle) try { handle.focus(); } catch { fail(); } },
 		key(key: PluginQuestionEditorKey): "handled" | "pass" { if (current && handle?.handleKeyDown) try { return handle.handleKeyDown(key) === "handled" ? "handled" : "pass"; } catch { fail(); } return "pass"; },
-		async append(text: string) { if (current && handle?.appendTranscript) { const adopted = handle; try { await adopted.appendTranscript!(text); } catch { fail(); } } },
-		async appendSpeech(speech: DictatedSpeech) { if (current && wantsSpeech(handle)) { const adopted = handle!; try { await adopted.appendDictatedSpeech!(speech); } catch { fail(); } } },
+		append: appendText,
+		appendSpeech(speech: DictatedSpeech) { if (current && wantsSpeech(handle)) return appendSpeechValue(speech); },
+		/** Deliver a final whose opt-in was latched when the run started: a
+		 *  mid-run flag removal falls back to plain text instead of dropping it. */
+		appendLatchedSpeech: appendSpeechValue,
 		fail, dispose,
 	};
 }
-export function createQuestionEditorLease(options: {
-	props: PluginQuestionEditorProps;
+type LeaseOptions<P> = {
+	props: P;
 	publish(state: PluginQuestionAnswerState): void;
 	changed(): void;
 	failed(): void;
-}) {
-	return createEditorLease<PluginQuestionEditorProps, PluginQuestionEditorHandle>({ ...options,
-		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }),
-		update: (handle, answer, active) => handle.update({ answer, active }),
+};
+/** The one lease shape both editors share: frozen props carrying the lease
+ *  signal and onChange, plus the kind-specific `update` payload. */
+function createFrozenPropsLease<P extends object, H extends EditorHandle>(
+	options: LeaseOptions<P>,
+	update: (handle: H, state: PluginQuestionAnswerState, active: boolean) => void,
+) {
+	return createEditorLease<P, H>({ ...options,
+		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }) as P,
+		update,
 	});
 }
-export function createProblemEditorLease(options: {
-	props: PluginProblemEditorProps;
-	publish(state: PluginQuestionAnswerState): void;
-	changed(): void;
-	failed(): void;
-}) {
-	return createEditorLease<PluginProblemEditorProps, PluginProblemEditorHandle>({ ...options,
-		props: (signal, onChange) => Object.freeze({ ...options.props, signal, onChange }),
-		update: (handle, submission, active) => handle.update({ submission, active }),
-	});
+export function createQuestionEditorLease(options: LeaseOptions<PluginQuestionEditorProps>) {
+	return createFrozenPropsLease<PluginQuestionEditorProps, PluginQuestionEditorHandle>(options,
+		(handle, answer, active) => handle.update({ answer, active }));
+}
+export function createProblemEditorLease(options: LeaseOptions<PluginProblemEditorProps>) {
+	return createFrozenPropsLease<PluginProblemEditorProps, PluginProblemEditorHandle>(options,
+		(handle, submission, active) => handle.update({ submission, active }));
 }
 export type QuestionEditorLease = ReturnType<typeof createQuestionEditorLease>;
 export type ProblemEditorLease = ReturnType<typeof createProblemEditorLease>;

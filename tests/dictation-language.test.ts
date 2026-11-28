@@ -38,13 +38,15 @@ describe("Nova-3 dictation language contract", () => {
 	});
 
 	it("filler_words is requested only for English and never changes the default URL", () => {
-		for (const english of ["en", "en-US", "en-GB", "en-IN", "en-AU", "en-NZ", "multi"]) {
+		for (const english of ["en", "en-US", "en-GB", "en-IN", "en-AU", "en-NZ"]) {
 			const url = new URL(deepgramListenUrl(english as never, { fillerWords: true }));
 			assert.equal(url.searchParams.get("filler_words"), "true", english);
 			assert.equal(deepgramListenUrl(english as never).includes("filler_words"), false, "opt-out stays filler-free");
 			assert.ok(isEnglishDictationLanguage(english as never), english);
 		}
-		for (const other of ["pl", "sv", "de", "zh", "pt-BR", "zh-Hant", "ar-EG"]) {
+		// Multilingual mode is not English; neither is every other code that
+		// merely starts with "e" (Estonian, Spanish, Greek).
+		for (const other of ["multi", "pl", "sv", "de", "et", "es", "el", "zh", "pt-BR", "zh-Hant", "ar-EG"]) {
 			assert.equal(new URL(deepgramListenUrl(other as never, { fillerWords: true })).searchParams.has("filler_words"), false, other);
 			assert.equal(isEnglishDictationLanguage(other as never), false, other);
 		}

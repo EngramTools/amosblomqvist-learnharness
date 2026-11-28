@@ -2,11 +2,11 @@ import React, { act } from "react";
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { parseHTML } from "linkedom";
-import { finishDictation, useDictation, useDictationTarget, type Dictation } from "../components/dictation.tsx";
+import { appendToPrimaryInput, finishDictation, useDictation, useDictationTarget, type Dictation } from "../components/dictation.tsx";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { useDictationLanguage } from "../components/dictation-preference.ts";
 import { isDictationActive, useDictationActive } from "../components/dictation-state.ts";
-import type { UserSettings } from "../src/core/index.ts";
+import type { DictatedSpeech, UserSettings } from "../src/core/index.ts";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -26,9 +26,9 @@ class Socket extends EventTarget {
 	close() { this.readyState = 3; }
 	open() { this.readyState = Socket.OPEN; this.dispatchEvent(new Event("open")); }
 	end(code = 1000) { this.close(); this.dispatchEvent(Object.assign(new Event("close"), { code })); }
-	final(text: string) {
+	final(text: string, words?: Array<DictatedSpeech["words"][number] & { punctuated_word?: string }>) {
 		this.dispatchEvent(Object.assign(new Event("message"), {
-			data: JSON.stringify({ type: "Results", is_final: true, channel: { alternatives: [{ transcript: text }] } }),
+			data: JSON.stringify({ type: "Results", is_final: true, channel: { alternatives: [{ transcript: text, ...(words ? { words } : {}) }] } }),
 		}));
 	}
 }
@@ -331,6 +331,70 @@ test("a confirmed save applies to capture even when subsequent settings GET requ
 	assert.equal(f.state.record.dictation?.language, "multi");
 	await act(async () => { f.dictation.toggle(); });
 	assert.equal(Socket.all[0]!.language, "multi");
+});
+
+test("explicit destination appendSpeech receives only declared words, never the text path", async () => {
+	const f = await fixture("en"); await f.mount();
+	const appends: string[] = [];
+	const speeches: DictatedSpeech[] = [];
+	await act(async () => {
+		f.dictation.toggleFor({
+			id: "side:speech",
+			append: (text) => { appends.push(text); },
+			appendSpeech: (speech) => { speeches.push(speech); },
+		});
+	});
+	const socket = Socket.all[0]!;
+	assert.match(socket.url, /[?&]filler_words=true/, "an opted-in English run asks for fillers");
+	const rawWords = [
+		{ word: "uh", start: 0.1, end: 0.3, confidence: 0.9, punctuated_word: "Uh" },
+		{ word: "yes", start: 0.4, end: 0.7, confidence: 0.95, punctuated_word: "yes" },
+	];
+	await act(async () => { socket.open(); socket.final("uh yes", rawWords); socket.end(); });
+	assert.deepEqual(speeches, [{ text: "uh yes", language: "en", words: [
+		{ word: "uh", start: 0.1, end: 0.3, confidence: 0.9 },
+		{ word: "yes", start: 0.4, end: 0.7, confidence: 0.95 },
+	] }]);
+	assert.deepEqual(appends, [], "the words receiver replaces the text receiver for the run");
+});
+
+test("word timings reset at the start of every run", async () => {
+	const f = await fixture("en"); await f.mount();
+	const speeches: DictatedSpeech[] = [];
+	const destination = { id: "side:reset", append: () => {}, appendSpeech: (speech: DictatedSpeech) => { speeches.push(speech); } };
+	await act(async () => { f.dictation.toggleFor(destination); });
+	const first = Socket.all[0]!;
+	await act(async () => { first.open(); first.final("uh yes", [{ word: "uh", start: 0, end: 0.2, confidence: 0.9 }]); first.end(); });
+	assert.equal(speeches[0]!.words.length, 1);
+	await act(async () => { f.dictation.toggleFor(destination); });
+	const second = Socket.all[1]!;
+	await act(async () => { second.open(); second.final("no timings"); second.end(); });
+	assert.deepEqual(speeches[1], { text: "no timings", language: "en", words: [] }, "a fresh run never inherits the previous run's words");
+});
+
+test("cancel discards gathered word timings and the next run delivers only its own", async () => {
+	const f = await fixture("en"); await f.mount();
+	const speeches: DictatedSpeech[] = [];
+	const destination = { id: "side:cancel", append: () => {}, appendSpeech: (speech: DictatedSpeech) => { speeches.push(speech); } };
+	await act(async () => { f.dictation.toggleFor(destination); });
+	const first = Socket.all[0]!;
+	await act(async () => { first.open(); first.final("discard these", [{ word: "discard", start: 0, end: 0.2, confidence: 0.9 }]); f.dictation.cancel(); });
+	assert.deepEqual(speeches, [], "cancel delivers nothing");
+	await act(async () => { f.dictation.toggleFor(destination); });
+	const second = Socket.all[1]!;
+	await act(async () => { second.open(); second.final("keep this", [{ word: "keep", start: 0, end: 0.2, confidence: 0.9 }]); second.end(); });
+	assert.deepEqual(speeches, [{ text: "keep this", language: "en", words: [{ word: "keep", start: 0, end: 0.2, confidence: 0.9 }] }]);
+});
+
+test("unmount releases the primary target so late appends cannot reach the departed page", async () => {
+	const f = await fixture("en");
+	f.state.claimed = (text) => { f.state.appends.push(text); };
+	await f.mount();
+	assert.equal(appendToPrimaryInput("live"), true);
+	assert.deepEqual(f.state.appends, ["live"]);
+	await f.unmount();
+	assert.equal(appendToPrimaryInput("late"), false);
+	assert.deepEqual(f.state.appends, ["live"]);
 });
 
 test("unmount during a pending language read prevents orphaned capture", async () => {
