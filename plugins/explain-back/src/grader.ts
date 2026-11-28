@@ -49,11 +49,17 @@ export function modelLabel(model: PluginModelSpec): string {
 
 /** Reject a hung host-model call: race the call against a bounded timer so
  *  a stalled grading model surfaces as a grading error, not a deadlock. */
-async function withTimeout<T>(call: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+async function withTimeout<T>(call: (signal: AbortSignal) => Promise<T>, parent: AbortSignal, timeoutMs: number, label: string): Promise<T> {
+  const controller = new AbortController();
+  const signal = AbortSignal.any([parent, controller.signal]);
   const { promise, reject } = Promise.withResolvers<never>();
-  const timer = setTimeout(() => reject(new Error(`The ${label} call timed out after ${Math.round(timeoutMs / 1000)} seconds.`)), timeoutMs);
+  const timer = setTimeout(() => {
+    const error = new Error(`The ${label} call timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    reject(error);
+    controller.abort(error);
+  }, timeoutMs);
   try {
-    return await Promise.race([call, promise]);
+    return await Promise.race([call(signal), promise]);
   } finally {
     clearTimeout(timer);
   }
@@ -205,7 +211,7 @@ export async function gradeExplainBack<Q, A>(
     pauseThresholdSeconds: options.pauseThresholdSeconds ?? DEFAULT_PAUSE_THRESHOLD_SECONDS,
   });
   const model = await resolveGradingModel(context, grading.chatId);
-  const message = await withTimeout(context.inference.complete({
+  const message = await withTimeout(signal => context.inference.complete({
     model,
     purpose: "user",
     context: {
@@ -216,8 +222,8 @@ export async function gradeExplainBack<Q, A>(
         timestamp: Date.now(),
       }],
     },
-    signal: grading.signal,
-  }), options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `literal reader (${modelLabel(model)})`);
+    signal,
+  }), grading.signal, options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `literal reader (${modelLabel(model)})`);
   grading.signal.throwIfAborted();
   const replyText = completionText(message, model);
   if (!replyText) throw new Error(`The literal reader (${modelLabel(model)}) returned no text.`);
@@ -290,7 +296,7 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
 async function writeFixWording(request: FixWordingRequest): Promise<string> {
   let text: string;
   try {
-    const message = await withTimeout(request.context.inference.complete({
+    const message = await withTimeout(signal => request.context.inference.complete({
       model: request.model,
       purpose: "user",
       context: {
@@ -301,8 +307,8 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
           timestamp: Date.now(),
         }],
       },
-      signal: request.signal,
-    }), request.options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `explain-back model ${modelLabel(request.model)}`);
+      signal,
+    }), request.signal, request.options.modelCallTimeoutMs ?? MODEL_CALL_TIMEOUT_MS, `explain-back model ${modelLabel(request.model)}`);
     request.signal.throwIfAborted();
     text = completionText(message, request.model);
   } catch (error) {

@@ -419,6 +419,7 @@ test("a reader error names the model that ran", async () => {
 test("a hung literal-reader call times out as a grading error", async () => {
   const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}), modelCallTimeoutMs: 250 });
   await assert.rejects(f.grade(gradingContext()), /literal reader \(test\/default-model\) call timed out after 0 seconds\./);
+  assert.equal(f.requests[0]!.signal?.aborted, true);
   f.cleanup();
 });
 
@@ -442,6 +443,8 @@ test("a hung fix-wording call marks scoring unavailable instead of hanging", asy
     if (!result.scoring || result.scoring.status !== "unavailable") assert.fail("expected scoring to be unavailable with a reason");
     assert.match(result.scoring.reason, /claude-code\/sonnet could not write the fix wording/);
     assert.equal(result.reconstruction, gradedPayload.reconstruction);
+    assert.equal(hanging.requests[1]!.signal?.aborted, true);
+    assert.equal(hanging.requests[0]!.signal?.aborted, false);
   } finally {
     hanging.cleanup();
     await stub.close();
