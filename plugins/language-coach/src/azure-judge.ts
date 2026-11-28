@@ -52,7 +52,7 @@ export function createAzureJudge(options: AzureJudgeOptions): PronunciationJudge
             Accept: "application/json",
             "Pronunciation-Assessment": buildPronunciationAssessmentHeader(referenceText, locale),
           },
-          body: clip,
+          body: new Blob([Uint8Array.from(clip)]),
           signal: controller.signal,
         }).catch(() => null);
         if (!response) {

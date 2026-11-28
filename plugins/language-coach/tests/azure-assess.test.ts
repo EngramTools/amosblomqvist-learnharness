@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import type { IncomingHttpHeaders } from "node:http";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,7 +18,7 @@ function readFixture(name: string): unknown {
   return JSON.parse(fs.readFileSync(path.join(fixtureRoot, "fixtures", name), "utf8"));
 }
 
-function parseHeader(requestHeaders: { "pronunciation-assessment"?: string }): Record<string, unknown> {
+function parseHeader(requestHeaders: IncomingHttpHeaders): Record<string, unknown> {
   const raw = requestHeaders["pronunciation-assessment"];
   assert.ok(typeof raw === "string");
   return JSON.parse(raw) as Record<string, unknown>;

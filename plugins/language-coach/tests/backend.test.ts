@@ -5,6 +5,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import type { PluginBackendContext } from "learnharness-plugin-api";
 import { activate } from "../src/backend.ts";
+import type { AssessmentResult } from "../src/judge-types.ts";
 import { encodeWav16kMono } from "../src/wav-encoder.ts";
 import { sendJson, stubSpeechServer } from "./support/http-stub.ts";
 
@@ -72,11 +73,11 @@ test("assess-pronunciation routes through the registered backend handler", async
     const { call, cleanup } = backendFixture(directory, stub.host);
     await call("save-settings", { key: "azure-key", region: "westus", targetLanguage: "en-US", firstLanguage: "en" });
     const wav = encodeWav16kMono(new Float32Array(800), 16_000);
-    const result = await call("assess-pronunciation", {
+    const result = (await call("assess-pronunciation", {
       wavBase64: Buffer.from(wav).toString("base64"),
       referenceText: "hello",
       locale: "en-US",
-    });
+    })) as AssessmentResult;
     assert.equal(result.status, "ok");
     assert.equal(stub.requests.length, 1);
     cleanup();
