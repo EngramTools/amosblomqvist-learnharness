@@ -413,3 +413,49 @@ test("reference voices default per language and are validated in settings", asyn
   assert.equal(reset.enVoice, DEFAULT_EN_VOICE);
   cleanup();
 });
+
+test("reference dictionary ignores inherited object properties", async () => {
+  const { pronunciationFor } = await import("../src/pronunciation.ts");
+  const prototype = Object.prototype;
+  Object.defineProperty(prototype, "valueof", { value: () => "inherited", configurable: true });
+  try {
+    assert.deepEqual(pronunciationFor("valueOf", "en-US"), {
+      status: "unavailable", reason: 'No CMUdict pronunciation for "valueOf".',
+    });
+    assert.equal(pronunciationFor("constructor", "en-US").status, "ok");
+  } finally {
+    Reflect.deleteProperty(prototype, "valueof");
+  }
+});
+
+test("reference TTS rejects unsafe regions before sending credentials", async () => {
+  const { synthesizeReference } = await import("../src/reference-tts.ts");
+  for (const region of ["evil.example/x#", "west/us", "west#us", "west@us", "WestUS"]) {
+    let calls = 0;
+    const result = await synthesizeReference({
+      subscriptionKey: "secret", region, voice: DEFAULT_EN_VOICE, text: "hello",
+      locale: "en-US", cacheDirectory: tempDirectory(),
+      fetch: async () => { calls++; return new Response("audio"); },
+    });
+    assert.equal(result.status, "unavailable");
+    assert.equal(calls, 0);
+  }
+});
+
+test("reference TTS timeout covers a stalled response body", async () => {
+  const { synthesizeReference } = await import("../src/reference-tts.ts");
+  const result = await synthesizeReference({
+    subscriptionKey: "secret", region: "westus", voice: DEFAULT_EN_VOICE, text: "hello",
+    locale: "en-US", cacheDirectory: tempDirectory(), timeoutMs: 10,
+    fetch: async (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        const fallback = setTimeout(() => controller.error(new Error("body stalled")), 100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(fallback);
+          controller.error(new Error("aborted"));
+        }, { once: true });
+      },
+    })),
+  });
+  assert.deepEqual(result, { status: "unavailable", reason: "Azure reference audio timed out." });
+});

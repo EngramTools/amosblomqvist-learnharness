@@ -60,6 +60,7 @@ export function createReferenceAudioPlayer(deps: ReferenceAudioPlayerDeps) {
   let configReason = "";
   let failureReason = "";
   let busy = false;
+  let generation = 0;
 
   const show = (message: string, error = false) => {
     status.textContent = message;
@@ -88,6 +89,8 @@ export function createReferenceAudioPlayer(deps: ReferenceAudioPlayerDeps) {
 
   /** A changed text or language is a new attempt, so a previous failure no longer applies. */
   const reset = () => {
+    generation++;
+    busy = false;
     failureReason = "";
     show("");
     applyState();
@@ -98,7 +101,7 @@ export function createReferenceAudioPlayer(deps: ReferenceAudioPlayerDeps) {
     disable(reason);
   };
 
-  const present = async (result: ReferenceAudioResult): Promise<void> => {
+  const present = async (result: ReferenceAudioResult, current: number): Promise<void> => {
     if (result.status === "unavailable") {
       fail(result.reason);
       return;
@@ -106,7 +109,7 @@ export function createReferenceAudioPlayer(deps: ReferenceAudioPlayerDeps) {
     await (deps.playAudio ?? (source => playInBrowser(audio, source)))(
       `data:${result.contentType};base64,${result.audioBase64}`,
     );
-    if (deps.isLive()) show(result.cached ? CACHED : PLAYING);
+    if (deps.isLive() && current === generation) show(result.cached ? CACHED : PLAYING);
   };
 
   const play = async () => {
@@ -116,22 +119,26 @@ export function createReferenceAudioPlayer(deps: ReferenceAudioPlayerDeps) {
       show(NEEDS_TEXT, true);
       return;
     }
+    const current = generation;
     busy = true;
     failureReason = "";
     button.disabled = true;
     show(LOADING);
     try {
       const result = readReferenceAudio(await deps.call("get-reference-audio", { text, locale }));
-      if (deps.isLive()) await present(result);
+      if (deps.isLive() && current === generation) await present(result, current);
     } catch (error) {
-      if (deps.isLive()) fail(error instanceof Error ? error.message : UNREADABLE);
+      if (deps.isLive() && current === generation) fail(error instanceof Error ? error.message : UNREADABLE);
     } finally {
-      busy = false;
-      if (deps.isLive()) applyState();
+      if (current === generation) {
+        busy = false;
+        if (deps.isLive()) applyState();
+      }
     }
   };
 
   const dispose = () => {
+    generation++;
     audio.removeAttribute("src");
     if (typeof audio.pause === "function") audio.pause();
   };

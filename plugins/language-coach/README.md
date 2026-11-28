@@ -13,7 +13,7 @@ assesses Mandarin (`zh-CN`), adding per-syllable initial, final and tone decisio
   `zh-CN`, Mandarin assessment uses TonePerfect; otherwise Azure assesses the clip.
 - Azure Speech region — editable in the settings row, stored next to the key.
 - English and Mandarin reference voices — Azure neural voice names, defaulting to
-  `en-US-JennyNeural` and `zh-CN-XiaoxiaoNeural`. A blank voice saves the default.
+  `en-US-JennyNeural` and `zh-CN-XiaoxiaoNeural`. Saving a blank voice writes the default voice name to settings.
 - Target language: `en-US` or `zh-CN`.
 - Learner first language — saved with the coach profile (`coachProfile()` in
   `src/settings-store.ts`). Teacher prompts that use it are planned but not
@@ -55,7 +55,7 @@ short-audio pronunciation endpoint with scripted grading:
 
 ## Reference audio
 
-The clip recorder's *Play reference* button synthesizes the entered text with Azure
+The settings view’s clip recorder (the *Record a clip* section) has a *Play reference* button that synthesizes the entered text with Azure
 neural text-to-speech, forcing the pronunciation from bundled dictionary data:
 
 - en-US uses CMUdict, with Arpabet mapped to IPA inside
@@ -66,8 +66,14 @@ A word missing from the dictionary, a missing Azure key or region, and a TTS fai
 return a readable `unavailable` result; the play button is disabled with that reason and
 the recorder still works. Successful audio is cached under the plugin data directory
 (`reference-audio/`), keyed by a SHA-256 hash of the voice, text and pronunciation. The
-cache keeps the newest 64 phrases and evicts the oldest first.
+cache keeps the 64 most recently inserted entries and evicts the oldest insertion first.
+Playing a cached entry does not refresh its age; different voices count as separate entries.
 
 Dependencies: [pinyin-pro](https://github.com/zh-lx/pinyin-pro) (MIT) and
 [cmu-pronouncing-dictionary](https://github.com/wooorm/cmu-pronouncing-dictionary)
-(ISC, from CMUdict).
+(ISC packaging; the CMUdict data carries its own license).
+
+The committed package-lock.json resolves cmu-pronouncing-dictionary 3.0.0 and
+pinyin-pro 3.29.5 from the default registry, registry.npmjs.org. Neither published
+package defines preinstall, install, or postinstall scripts. The installed
+pinyin-pro package includes its MIT terms in LICENSE.

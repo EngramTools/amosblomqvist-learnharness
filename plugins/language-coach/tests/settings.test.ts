@@ -641,3 +641,33 @@ test("playing reference audio loads the audio element and reports the source", a
   assert.equal((button(container, "Play reference") as HTMLButtonElement).disabled, false);
   controller.abort();
 });
+
+test("reset discards obsolete reference successes and failures", async () => {
+  const { createReferenceAudioPlayer } = await import("../src/reference-audio-player.ts");
+  for (const outcome of ["ok", "unavailable", "reject"]) {
+    const { document } = parseHTML("<html><body></body></html>");
+    const button = document.createElement("button");
+    const status = document.createElement("p");
+    let resolve!: (value: unknown) => void;
+    let reject!: (reason: Error) => void;
+    let played = 0;
+    const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const player = createReferenceAudioPlayer({
+      button, status, audio: document.createElement("audio"), isLive: () => true,
+      readInput: () => ({ text: "hello", locale: "en-US" }),
+      call: () => pending, playAudio: async () => { played++; },
+    });
+    player.setAvailable({ configured: true, region: "westus" });
+    const playing = player.play();
+    player.reset();
+    assert.equal(button.disabled, false);
+    if (outcome === "reject") reject(new Error("obsolete failure"));
+    else resolve(outcome === "ok"
+      ? { status: "ok", audioBase64: "YQ==", contentType: "audio/mpeg", voice: DEFAULT_EN_VOICE, cached: false }
+      : { status: "unavailable", reason: "obsolete failure" });
+    await playing;
+    assert.equal(played, 0);
+    assert.equal(status.textContent, "");
+    assert.equal(button.disabled, false);
+  }
+});

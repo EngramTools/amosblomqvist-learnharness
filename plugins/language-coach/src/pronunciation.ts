@@ -41,7 +41,9 @@ function ipaPhone(phone: string): string | undefined {
 
 function ipaForWord(word: string): string | undefined {
   const key = word.replace(/’/g, "'").toLowerCase();
-  const phones = dictionary[key] ?? dictionary[`${key}(2)`];
+  const alternate = `${key}(2)`;
+  const phones = Object.hasOwn(dictionary, key) ? dictionary[key]
+    : Object.hasOwn(dictionary, alternate) ? dictionary[alternate] : undefined;
   if (!phones) return undefined;
   const ipa = phones.split(" ").map(ipaPhone);
   return ipa.some(phone => phone === undefined) ? undefined : ipa.join("");

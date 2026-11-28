@@ -187,6 +187,7 @@ function applyPublicSettings(fields: FormFields, settings: PublicSettings, profi
   fields.region.input.value = settings.region;
   fields.enVoice.input.value = settings.enVoice;
   fields.zhVoice.input.value = settings.zhVoice;
+  // linkedom exposes select.value as getter-only; selecting the option also works in browsers.
   const target = Array.from(fields.target.input.options).find(option => option.value === profile.targetLanguage);
   if (target) target.selected = true;
   fields.first.input.value = profile.firstLanguage;

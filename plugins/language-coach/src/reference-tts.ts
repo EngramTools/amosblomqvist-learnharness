@@ -109,7 +109,7 @@ async function requestAzureAudio(request: AzureRequest): Promise<AzureResult> {
       signal: controller.signal,
     }).catch(() => null);
     if (!response) return unavailable(timedOut ? "Azure reference audio timed out." : "Azure reference audio could not be reached.");
-    return readAudioResponse(response, () => timedOut);
+    return await readAudioResponse(response, () => timedOut);
   } finally {
     clearTimeout(timer);
   }
@@ -125,6 +125,7 @@ export async function synthesizeReference(options: ReferenceTtsOptions): Promise
   const region = options.region.trim();
   if (!subscriptionKey) return unavailable(MISSING_KEY);
   if (!region) return unavailable(MISSING_REGION);
+  if (!/^[a-z0-9]+$/.test(region)) return unavailable("Invalid Azure Speech region.");
   const pronunciation = pronunciationFor(options.text, options.locale);
   if (pronunciation.status !== "ok") return unavailable(pronunciation.reason);
 
