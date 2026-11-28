@@ -31,6 +31,7 @@ export type ToolBridge = {
 	allowedTools: string[];
 	waitForToolCalls(count: number): Promise<PendingToolCall[]>;
 	resolveToolCall(call: PendingToolCall, result: ToolResultMessage): void;
+	forgetToolUseId(id: string): void;
 	getPendingToolCalls(): PendingToolCall[];
 	close(): Promise<void>;
 };
@@ -125,7 +126,7 @@ class ToolCallQueue {
 
 // Low-level Server on purpose: McpServer.registerTool only takes zod schemas, and pi tools carry
 // JSON Schema that must reach the CLI unchanged.
-function createMcpServer(tools: Tool[], queue: ToolCallQueue, callbacks?: BridgeCallbacks): Server {
+function createMcpServer(tools: Tool[], queue: ToolCallQueue, callbacks?: BridgeCallbacks): { server: Server; forgetToolUseId(id: string): void } {
 	const server = new Server({ name: BRIDGE_SERVER_NAME, version: "1.0.0" }, { capabilities: { tools: {} } });
 
 	server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: tools.map(toMcpTool) }));
@@ -149,7 +150,7 @@ function createMcpServer(tools: Tool[], queue: ToolCallQueue, callbacks?: Bridge
 		return result;
 	});
 
-	return server;
+	return { server, forgetToolUseId: (id) => { seenIds.delete(id); } };
 }
 
 function isAuthorized(header: string | undefined, expected: Buffer): boolean {
@@ -206,7 +207,7 @@ export async function createToolBridge(tools: Tool[], callbacks?: BridgeCallback
 	const authorization = `Bearer ${randomBytes(TOKEN_BYTES).toString("hex")}`;
 
 	const queue = new ToolCallQueue();
-	const mcpServer = createMcpServer(tools, queue, callbacks);
+	const { server: mcpServer, forgetToolUseId } = createMcpServer(tools, queue, callbacks);
 	const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
 	await mcpServer.connect(transport);
 
@@ -224,6 +225,7 @@ export async function createToolBridge(tools: Tool[], callbacks?: BridgeCallback
 		allowedTools: tools.map((tool) => `${MCP_TOOL_PREFIX}${tool.name}`),
 		waitForToolCalls: (count) => queue.waitFor(count),
 		resolveToolCall: (call, result) => queue.resolve(call, result),
+		forgetToolUseId,
 		getPendingToolCalls: () => queue.list(),
 		close: async () => {
 			queue.clear();
