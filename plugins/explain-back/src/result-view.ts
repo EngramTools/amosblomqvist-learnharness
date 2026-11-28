@@ -79,7 +79,17 @@ function mountCriterionScores(document: Document, container: HTMLElement, scorin
     "lh-explain-back__fix-choice",
     `${GAP_LABELS[scoring.fix.criterion]} · ${formatProbability(scoring.fix.probability)}`,
   ));
-  fix.append(paragraph(document, "lh-explain-back__prose", scoring.fix.wording));
+  const wording = scoring.fix.wording;
+  if (wording !== undefined) fix.append(paragraph(document, "lh-explain-back__prose", wording));
+  else {
+    const reason = scoring.fix.unavailableReason ?? "the wording model call failed";
+    const sentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
+    fix.append(paragraph(
+      document,
+      "lh-explain-back__prose lh-explain-back__fix-wording-unavailable",
+      `Fix wording is unavailable: ${sentence}`,
+    ));
+  }
   container.append(fix);
 }
 
@@ -105,6 +115,15 @@ function mountScoring(document: Document, container: HTMLElement, scoring: Expla
   unavailable.setAttribute("role", "status");
   unavailable.append(paragraph(document, "lh-explain-back__prose", scoring.reason));
   container.append(unavailable);
+}
+
+/** The model that graded this result, shown on every outcome: ok cards,
+ *  unavailable scoring, and reader errors. Older saved results have none. */
+function mountGradedBy(document: Document, container: HTMLElement, model: string | undefined): void {
+  if (!model) return;
+  const provenance = paragraph(document, "lh-explain-back__graded-by", `Graded by ${model}.`);
+  provenance.dataset.gradedBy = model;
+  container.append(provenance);
 }
 
 function mountResult(document: Document, container: HTMLElement, result: ExplainBackResult): void {
@@ -138,6 +157,7 @@ function mountResult(document: Document, container: HTMLElement, result: Explain
   container.append(gaps);
   if (result.scoring) mountScoring(document, container, result.scoring);
   if (result.delivery) mountDelivery(document, container, result.delivery);
+  mountGradedBy(document, container, result.gradedBy);
 }
 
 export function mountGrading(container: HTMLElement, grading: PluginQuestionGradingOutcome, signal: AbortSignal): () => void {

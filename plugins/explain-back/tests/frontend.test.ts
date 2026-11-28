@@ -152,6 +152,7 @@ test("the answered card shows the saved explanation, reconstruction and labelled
           { kind: "missing step", detail: "Squaring 2k gives 4k²." },
           { kind: "conclusion buried", detail: "Divisible by 4." },
         ],
+        gradedBy: "claude-code/sonnet",
       },
     },
   });
@@ -165,9 +166,26 @@ test("the answered card shows the saved explanation, reconstruction and labelled
   assert.match(text, /Squaring 2k gives 4k²\./);
   assert.match(text, /Conclusion buried/);
   assert.match(text, /Divisible by 4\./);
+  assert.match(text, /Graded by claude-code\/sonnet\./);
+  assert.equal(container.querySelector("[data-graded-by]")?.getAttribute("data-graded-by"), "claude-code/sonnet");
   assert.equal(container.querySelectorAll("[data-gap-kind]").length, 2);
   controller.abort();
   assert.equal(container.textContent, "");
+});
+
+test("a result without gradedBy, as older saves have, shows no model line", () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.renderer.mountAnswered!(container, {
+    ...mountContext(controller.signal),
+    answer: { text: "An even number is 2k." },
+    grading: { result: { version: 1, reconstruction: "An even number is 2k.", gaps: [] } },
+  });
+  assert.equal(container.textContent!.includes("Graded by"), false);
+  assert.equal(container.querySelector("[data-graded-by]"), null);
+  controller.abort();
 });
 
 test("an empty reconstruction shows a placeholder and still lists the gaps", () => {
@@ -202,10 +220,10 @@ test("a grading error is shown readably and an unreadable saved result falls bac
   f.renderer.mountAnswered!(failed, {
     ...mountContext(first.signal),
     answer: { text: "An even number is 2k." },
-    grading: { error: "Provider connection failed." },
+    grading: { error: "The literal reader (claude-code/sonnet) could not finish: The provider refused the request." },
   });
   assert.match(failed.textContent!, /Your answer was saved/);
-  assert.match(failed.textContent!, /Provider connection failed\./);
+  assert.match(failed.textContent!, /The literal reader \(claude-code\/sonnet\) could not finish/);
   assert.match(failed.textContent!, /Feedback unavailable/);
 
   f.renderer.mountAnswered!(invalid, {
@@ -274,6 +292,7 @@ test("unavailable scoring shows only the reason and keeps the reconstruction and
         reconstruction: "An even number is 2k.",
         gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
         scoring: { status: "unavailable", reason: "Jev is rate limiting requests (HTTP 429)." },
+        gradedBy: "claude-code/sonnet",
       },
     },
   });
@@ -284,7 +303,49 @@ test("unavailable scoring shows only the reason and keeps the reconstruction and
   assert.match(text, /Squaring 2k gives 4k²\./);
   assert.match(text, /Scoring unavailable/);
   assert.match(text, /Jev is rate limiting requests \(HTTP 429\)\./);
+  assert.match(text, /Graded by claude-code\/sonnet\./);
   assert.equal(container.querySelectorAll("[data-criterion]").length, 0);
   assert.equal(container.querySelectorAll("[data-fix-criterion]").length, 0);
   controller.abort();
+});
+
+test("the fix-choice line names the criterion with a rounded percent, even when wording failed", () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.renderer.mountAnswered!(container, {
+    ...mountContext(controller.signal),
+    answer: { text: "An even number is 2k, so its square is divisible by 4." },
+    grading: {
+      result: {
+        version: 1,
+        reconstruction: "An even number is 2k, and its square is 4k².",
+        gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
+        scoring: {
+          status: "ok",
+          criteria: { "missing step": 0.8264, "undefined term": 0.105, "wrong order": 0.034, "conclusion buried": 0.275 },
+          fix: {
+            criterion: "wrong order",
+            probability: 0.034,
+            unavailableReason: "The explain-back model test/default-model could not write the fix wording.",
+          },
+        },
+      },
+    },
+  });
+
+  const text = container.textContent!;
+  const fixChoice = container.querySelector(".lh-explain-back__fix-choice");
+  assert.equal(fixChoice?.textContent, "Wrong order · 3%");
+  assert.match(text, /83%/);
+  assert.match(text, /11%/);
+  assert.match(text, /3%/);
+  assert.match(text, /28%/);
+  assert.equal(container.querySelector("[data-fix-criterion]")?.getAttribute("data-fix-criterion"), "wrong order");
+  assert.match(text, /Fix wording is unavailable/);
+  assert.match(text, /could not write the fix wording\./);
+  assert.doesNotMatch(text, /\.\./);
+  controller.abort();
+  assert.equal(container.textContent, "");
 });

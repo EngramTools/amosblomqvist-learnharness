@@ -179,6 +179,7 @@ test("saves the key in the data directory and grades through the registered grad
         fix: { criterion: "missing step", probability: 0.82, wording },
       },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
     const request = stub.requests[0]!.body as JevRequest;
     assert.deepEqual(request.state, {
@@ -212,6 +213,7 @@ test("no key leaves the literal feedback unchanged and marks scoring unavailable
       ...literalResult,
       scoring: { status: "unavailable", reason: "No TypeSafe API key is configured, so criterion scoring is unavailable." },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
     assert.equal("criteria" in result.scoring, false);
     assert.equal("fix" in result.scoring, false);
@@ -266,7 +268,7 @@ test("a stalled Jev request marks scoring unavailable while keeping the literal 
   }
 });
 
-test("a failed fix-wording call marks scoring unavailable instead of returning partial scores", async () => {
+test("a failed fix-wording call keeps the scores and explains the missing wording", async () => {
   const stub = await stubJsonServer((_request, response) => sendJson(response, 200, jevResponse()));
   const f = fixture({ jev: { endpoint: stub.url, timeoutMs: 500 }, failWording: true });
   try {
@@ -274,8 +276,13 @@ test("a failed fix-wording call marks scoring unavailable instead of returning p
     const result = await f.grade(gradingContext());
     assert.deepEqual(result, {
       ...literalResult,
-      scoring: { status: "unavailable", reason: "The explain-back model test/default-model could not write the fix wording." },
+      scoring: {
+        status: "ok",
+        criteria,
+        fix: { criterion: "missing step", probability: 0.82, unavailableReason: "The explain-back model test/default-model could not write the fix wording." },
+      },
       delivery: { status: "unavailable", reason: "Interview mode is off." },
+      gradedBy: "test/default-model",
     });
   } finally {
     f.cleanup();
