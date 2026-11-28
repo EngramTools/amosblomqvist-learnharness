@@ -417,7 +417,7 @@ test("a reader error names the model that ran", async () => {
 });
 
 test("a hung literal-reader call times out as a grading error", async () => {
-  const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}), modelCallTimeoutMs: 40 });
+  const f = fixture({ complete: () => new Promise<AssistantMessage>(() => {}), modelCallTimeoutMs: 250 });
   await assert.rejects(f.grade(gradingContext()), /literal reader \(test\/default-model\) call timed out after 0 seconds\./);
   f.cleanup();
 });
@@ -435,7 +435,7 @@ test("a hung fix-wording call marks scoring unavailable instead of hanging", asy
     },
     typesafeKey: "sk-typesafe-grading",
     jev: { endpoint: stub.url, timeoutMs: 500 },
-    modelCallTimeoutMs: 40,
+    modelCallTimeoutMs: 250,
   });
   try {
     const result = await hanging.grade(gradingContext());
