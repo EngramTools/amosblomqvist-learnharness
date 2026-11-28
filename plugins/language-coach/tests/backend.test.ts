@@ -31,6 +31,12 @@ function backendFixture(dataDirectory: string, judgeHost?: string) {
       handlers.set(name, handler);
       return () => handlers.delete(name);
     },
+    registerQuestionType() {
+      return () => {};
+    },
+    registerInstructions() {
+      return () => {};
+    },
   } as unknown as PluginBackendContext;
   const cleanup = activate(ctx, judgeHost ? { judge: { endpointBase: judgeHost } } : {});
   const call = async (name: string, input?: unknown) => {

@@ -110,7 +110,10 @@ test("assess sends 16 kHz mono PCM WAV with scripted pronunciation headers for e
     sendJson(response, 200, readFixture("azure-en-us.json"));
   }, { referenceText: "think" });
   const ok = assertOk(result);
-  assert.deepEqual(ok.words, [{ word: "think", score: 70 }]);
+  assert.deepEqual(ok.words, [{ word: "think", score: 70, phonemes: [
+    { phoneme: "θ", score: 42, heard: ["s", "θ", "f", "t", "ð"] },
+    { phoneme: "ɪ", score: 90, heard: ["ɪ", "i", "ə", "e", "ɑ"] },
+  ] }]);
   assert.equal(ok.phonemes?.length, 2);
   assert.deepEqual(ok.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ", "f", "t", "ð"] });
   assert.equal(ok.scores.accuracy, 88);
@@ -191,7 +194,7 @@ test("the REST response shape maps the scores Azure returns on the best entry an
   assert.equal(ok.scores.fluency, 90);
   assert.equal(ok.scores.completeness, 95);
   assert.equal(ok.scores.prosody, 72);
-  assert.deepEqual(ok.words, [{ word: "think", score: 70 }]);
+  assert.deepEqual(ok.words, [{ word: "think", score: 70, phonemes: [{ phoneme: "θ", score: 42, heard: ["s", "θ"] }] }]);
   assert.deepEqual(ok.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ"] });
 });
 
@@ -239,5 +242,5 @@ test("a zh-CN response with a syllable that has no score is unavailable instead 
 test("an explicit zero score is a real score", async () => {
   const ok = assertOk(await assessVia(respondJson(restBody({ best: { AccuracyScore: 0 }, word: { AccuracyScore: 0 } }))));
   assert.equal(ok.scores.accuracy, 0);
-  assert.deepEqual(ok.words, [{ word: "think", score: 0 }]);
+  assert.deepEqual(ok.words, [{ word: "think", score: 0, phonemes: [{ phoneme: "θ", score: 42, heard: ["s", "θ"] }] }]);
 });

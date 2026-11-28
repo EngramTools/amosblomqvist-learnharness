@@ -47,3 +47,13 @@ short-audio pronunciation endpoint with scripted grading:
   phonemes Azure heard for it.
 - *syllable-level scoring* (Mandarin) — every syllable of a word is scored separately
   and reported with its pinyin spelling.
+
+## Read-aloud drills
+
+The plugin registers a `read-aloud` question type (tool `read_aloud`). The teacher poses
+a word, phrase or sentence plus the target language; the learner records themselves
+reading it and sees one row per word. Expected pronunciations come from the bundled
+dictionaries only — CMUdict (Arpabet mapped to IPA) for en-US, pinyin-pro for zh-CN —
+never from a model. A word missing from CMUdict is reported as "no dictionary
+pronunciation" instead of being guessed. When the judge returns `unavailable`, the
+answer and recording are saved and the result shows the reason with no score.

@@ -80,7 +80,7 @@ function mapHeard(nbest: unknown): string[] {
 }
 
 function mapPhonemes(words: unknown): PhonemeAssessment[] {
-  return wordParts(words, "Phonemes").flatMap(phoneme => typeof phoneme.Phoneme === "string"
+  return records(words).flatMap(word => records(word.Phonemes)).flatMap(phoneme => typeof phoneme.Phoneme === "string"
     ? [{ phoneme: phoneme.Phoneme, score: readScore(phoneme), heard: mapHeard(phoneme.NBestPhonemes) }]
     : []);
 }
@@ -91,11 +91,24 @@ function mapSyllable(syllable: Entry): SyllableAssessment {
 }
 
 function mapSyllables(words: unknown): SyllableAssessment[] {
-  return wordParts(words, "Syllables").map(mapSyllable);
+  return records(words).flatMap(word => records(word.Syllables)).map(mapSyllable);
 }
 
 function mapWords(words: unknown): WordAssessment[] {
-  return records(words).map(word => ({ word: text(word.Word), score: readScore(word) }));
+  return records(words).map(word => {
+    const entry: WordAssessment = { word: text(word.Word), score: readScore(word) };
+    const wordPhonemes = records(word.Phonemes);
+    if (wordPhonemes.length > 0) {
+      entry.phonemes = wordPhonemes.map(phoneme => ({
+        phoneme: typeof phoneme.Phoneme === "string" ? phoneme.Phoneme : "",
+        score: readScore(phoneme),
+        heard: mapHeard(phoneme.NBestPhonemes),
+      }));
+    }
+    const wordSyllables = records(word.Syllables);
+    if (wordSyllables.length > 0) entry.syllables = wordSyllables.map(mapSyllable);
+    return entry;
+  });
 }
 
 function statusReason(body: Entry): string | undefined {

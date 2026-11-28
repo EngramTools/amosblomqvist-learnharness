@@ -22,6 +22,10 @@ export type SyllableAssessment = {
 export type WordAssessment = {
   word: string;
   score: number;
+  /** Per-phoneme scores for this word, on ok en-US results. */
+  phonemes?: PhonemeAssessment[];
+  /** Per-syllable scores for this word, on ok zh-CN results. */
+  syllables?: SyllableAssessment[];
 };
 
 export type AssessmentOk = {

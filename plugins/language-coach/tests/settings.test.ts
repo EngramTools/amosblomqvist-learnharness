@@ -58,6 +58,9 @@ function fixture(options: FixtureOptions = {}) {
       notify = listener;
       return () => { notify = undefined; };
     },
+    registerQuestionRenderer() {
+      return () => {};
+    },
     registerSettings(registration: PluginSettingsRegistration) {
       if (typeof registration === "function") mount = registration;
       else if (registration && typeof registration === "object" && "mount" in registration) mount = registration.mount as Mount;

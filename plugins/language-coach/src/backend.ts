@@ -1,7 +1,10 @@
-import type { PluginBackendContext } from "learnharness-plugin-api";
+import type { PluginBackendContext, PluginQuestionGradingContext, PluginQuestionTypeDefinition } from "learnharness-plugin-api";
 import type { AssessmentResult, CoachLocale } from "./judge-types.ts";
 import { assess, createAzureJudge, type AzureJudgeRuntime } from "./azure-judge.ts";
 import { RECORDING_LIMIT_MS } from "./recorder.ts";
+import { definition as readAloudDefinition, type ReadAloudAnswer, type ReadAloudPayload } from "./read-aloud-contract.ts";
+import { gradeReadAloud, splitWords } from "./read-aloud-grade.ts";
+import { readAloudInstructions } from "./read-aloud-contract.ts";
 import {
   loadSettings,
   normalizeFirstLanguage,
@@ -62,6 +65,33 @@ function readLocale(input: unknown, settings: StoredSettings): CoachLocale {
   return settings.targetLanguage ?? "en-US";
 }
 
+/** Decode and bound a saved read-aloud recording exactly like an assess-pronunciation clip. */
+function readRecording(answer: unknown): Uint8Array {
+  if (!record(answer) || typeof answer.recording !== "string") throw new Error("Expected a recorded WAV clip.");
+  const bytes = Buffer.from(answer.recording.trim(), "base64");
+  if (!bytes.length) throw new Error(CLIP_EMPTY);
+  if (bytes.length > MAX_REQUEST_CLIP_BYTES) throw new Error(CLIP_TOO_LONG);
+  return new Uint8Array(bytes);
+}
+
+/** The registered read-aloud question: gradeAnswer runs the pronunciation judge
+ *  on the saved recording and merges per-sound results with dictionary expectations. */
+export function readAloudQuestionType(runtime: AzureJudgeRuntime, settings: () => StoredSettings): PluginQuestionTypeDefinition {
+  return {
+    ...readAloudDefinition,
+    gradeAnswer: async (context: PluginQuestionGradingContext<unknown, unknown>) => {
+      const gradingContext = context as unknown as PluginQuestionGradingContext<ReadAloudPayload, ReadAloudAnswer>;
+      gradingContext.signal.throwIfAborted();
+      const locale = normalizeTargetLanguage(gradingContext.input.payload.language);
+      const text = splitWords(gradingContext.input.payload.text).join(" ");
+      if (!text) throw new Error("The drill text must contain at least one word.");
+      const clip = readRecording(gradingContext.answer);
+      const judged = await judgeFor(settings(), runtime).assess(clip, text, locale);
+      return gradeReadAloud(text, locale, judged);
+    },
+  };
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -118,6 +148,23 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     return judgeFor(settings, options.judge).assess(clip, referenceText, locale);
   });
 
+  const judgeRuntime = options.judge ?? {};
+  let registeredQuestion: () => void;
+  try {
+    const unregisterInstructions = ctx.registerInstructions({ agents: ["teacher"], text: readAloudInstructions });
+    const unregisterQuestion = ctx.registerQuestionType(readAloudQuestionType(judgeRuntime, () => settings));
+    registeredQuestion = () => {
+      unregisterInstructions();
+      unregisterQuestion();
+    };
+  } catch (error) {
+    get();
+    getProfile();
+    save();
+    assessClip();
+    throw error;
+  }
+
   return () => {
     if (disposed) return;
     disposed = true;
@@ -125,6 +172,7 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     getProfile();
     save();
     assessClip();
+    registeredQuestion();
   };
 }
 

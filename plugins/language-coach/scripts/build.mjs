@@ -7,15 +7,17 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const output = path.join(root, "dist");
 try {
   if (fs.lstatSync(output).isSymbolicLink()) throw new Error("Refusing to build into a linked directory.");
-  try { fs.lstatSync(path.join(output, "data")); throw new Error("Refusing to build over plugin data. Move it to a safe location first."); }
+  try { fs.lstatSync(path.join(output, "dictionaries")); throw new Error("Refusing to build over plugin data. Move it to a safe location first."); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
 } catch (error) { if (error.code !== "ENOENT") throw error; }
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 const common = { bundle: true, target: "es2022", minify: true, legalComments: "eof", logLevel: "warning", absWorkingDir: root };
 await build({ ...common, entryPoints: { main: "src/main.ts" }, outdir: output, format: "esm", platform: "browser", splitting: true, chunkNames: "assets/[name]-[hash]" });
-await build({ ...common, entryPoints: ["src/backend.ts"], outfile: path.join(output, "backend.cjs"), format: "cjs", platform: "node" });
-for (const [from, to] of [["manifest.json", "manifest.json"], ["src/styles.css", "styles.css"], ["README.md", "README.md"], ["LICENSE", "LICENSE"]]) {
+// __dirname exists in the CJS bundle; the ESM source branch uses import.meta.url.
+await build({ ...common, entryPoints: ["src/backend.ts"], outfile: path.join(output, "backend.cjs"), format: "cjs", platform: "node", define: { "import.meta.url": '"file:///backend.cjs"' } });
+fs.mkdirSync(path.join(output, "dictionaries"), { recursive: true });
+for (const [from, to] of [["manifest.json", "manifest.json"], ["src/styles.css", "styles.css"], ["README.md", "README.md"], ["LICENSE", "LICENSE"], ["src/dictionaries/cmudict-arpabet.json", "dictionaries/cmudict-arpabet.json"]]) {
   fs.copyFileSync(path.join(root, from), path.join(output, to));
 }
 console.log(`Built ${output}`);
