@@ -15,6 +15,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Type } from "typebox";
 
+import { ABANDONED_CALL_MESSAGE } from "../src/agent/claude-code/abandoned-calls.ts";
 import { BRIDGE_SERVER_NAME, createToolBridge, toolNameFromMcp, type ToolBridge } from "../src/agent/claude-code/tool-bridge.ts";
 
 const READ_TOOL: Tool = { name: "read", description: "Read a file", parameters: Type.Object({ path: Type.String() }) };
@@ -263,6 +264,26 @@ test("missing and reused Claude tool IDs are rejected rather than matched by arg
 	await assert.rejects(client.callTool(params), /claudecode\/toolUseId/);
 	assert.deepEqual(bridge.getPendingToolCalls(), []);
 	assert.equal(failures.length, 2);
+});
+
+test("forgetToolUseId lets the CLI retry with the same tool id after an abandoned call", async (t) => {
+	const bridge = await createToolBridge([READ_TOOL]);
+	t.after(() => bridge.close());
+	const client = await connectClient(bridge);
+	t.after(() => client.close());
+	const params = { name: "read", arguments: { path: "a" }, _meta: { "claudecode/toolUseId": "toolu_retry" } };
+	const first = client.callTool(params);
+	const [call] = await bridge.waitForToolCalls(1);
+	assert.ok(call);
+	bridge.resolveToolCall(call, toolResult([{ type: "text", text: ABANDONED_CALL_MESSAGE }], true));
+	bridge.forgetToolUseId("toolu_retry");
+	await first;
+	const second = client.callTool(params);
+	const [retry] = await bridge.waitForToolCalls(1);
+	assert.ok(retry);
+	assert.equal(retry.id, "toolu_retry");
+	bridge.resolveToolCall(retry, toolResult([{ type: "text", text: "ok" }]));
+	await second;
 });
 
 test("toolNameFromMcp strips the bridge prefix", () => {
