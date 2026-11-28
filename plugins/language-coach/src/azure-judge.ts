@@ -68,11 +68,7 @@ export function createAzureJudge(options: AzureJudgeOptions): PronunciationJudge
         } catch {
           return unavailable(timedOut ? "Azure pronunciation assessment timed out." : "Azure returned an unreadable pronunciation payload.");
         }
-        try {
-          return mapAzurePronunciationResponse(body, locale);
-        } catch {
-          return unavailable("Azure returned an unexpected pronunciation payload.");
-        }
+        return mapAzurePronunciationResponse(body, locale);
       } finally {
         clearTimeout(timer);
       }

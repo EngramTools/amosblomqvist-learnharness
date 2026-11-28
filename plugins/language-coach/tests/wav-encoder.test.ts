@@ -11,6 +11,9 @@ test("encodeWav16kMono writes 16 kHz mono PCM with a WAV header", () => {
   const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
   assert.equal(view.getUint16(22, true), 1);
   assert.equal(view.getUint32(24, true), 16_000);
+  assert.equal(view.getUint32(4, true), 36 + samples.length * 2);
+  assert.equal(view.getUint32(28, true), 32_000);
+  assert.equal(view.getUint16(32, true), 2);
   assert.equal(view.getUint16(34, true), 16);
   assert.equal(wav.length, 44 + samples.length * 2);
 });

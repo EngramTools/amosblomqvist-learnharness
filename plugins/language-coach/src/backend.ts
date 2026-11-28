@@ -28,14 +28,22 @@ const MAX_REQUEST_CLIP_BYTES = MAX_CLIP_BYTES + CAPTURE_QUANTUM_BYTES;
 /** Azure assesses at most 30 s of speech, so a longer reference text can never be read in one clip. */
 const REFERENCE_TEXT_MAX_LENGTH = 500;
 
-function decodeClip(input: unknown): Uint8Array {
+const CLIP_EMPTY = "The recorded clip is empty.";
+const CLIP_TOO_LONG = "The recorded clip is longer than the 30-second limit.";
+const MAX_BASE64_LENGTH = Math.ceil(MAX_REQUEST_CLIP_BYTES / 3) * 4;
+
+function readWavBase64(input: unknown): string {
   if (!record(input) || typeof input.wavBase64 !== "string") throw new Error("Expected a recorded WAV clip.");
   const trimmed = input.wavBase64.trim();
-  if (!trimmed) throw new Error("The recorded clip is empty.");
-  if (trimmed.length > Math.ceil(MAX_REQUEST_CLIP_BYTES / 3) * 4) throw new Error("The recorded clip is longer than the 30-second limit.");
-  const bytes = Buffer.from(trimmed, "base64");
-  if (!bytes.length) throw new Error("The recorded clip is empty.");
-  if (bytes.length > MAX_REQUEST_CLIP_BYTES) throw new Error("The recorded clip is longer than the 30-second limit.");
+  if (!trimmed) throw new Error(CLIP_EMPTY);
+  if (trimmed.length > MAX_BASE64_LENGTH) throw new Error(CLIP_TOO_LONG);
+  return trimmed;
+}
+
+function decodeClip(input: unknown): Uint8Array {
+  const bytes = Buffer.from(readWavBase64(input), "base64");
+  if (!bytes.length) throw new Error(CLIP_EMPTY);
+  if (bytes.length > MAX_REQUEST_CLIP_BYTES) throw new Error(CLIP_TOO_LONG);
   return new Uint8Array(bytes);
 }
 
@@ -64,6 +72,16 @@ function judgeFor(settings: StoredSettings, runtime?: AzureJudgeRuntime) {
   return createAzureJudge({ subscriptionKey: key, region, ...runtime });
 }
 
+/** Apply only the fields the caller sent, validating each one. */
+function mergeSettings(settings: StoredSettings, input: Record<string, unknown>): StoredSettings {
+  const next: StoredSettings = { ...settings };
+  if (input.key !== undefined) next.azureSpeechKey = readSpeechKey(input);
+  if (typeof input.region === "string") next.azureRegion = normalizeRegion(input.region);
+  if (input.targetLanguage !== undefined) next.targetLanguage = normalizeTargetLanguage(input.targetLanguage);
+  if (input.firstLanguage !== undefined) next.firstLanguage = normalizeFirstLanguage(input.firstLanguage);
+  return next;
+}
+
 export function activate(ctx: PluginBackendContext, options: LanguageCoachBackendOptions = {}): () => void {
   const settings = loadSettings(ctx.dataDirectory);
   let disposed = false;
@@ -84,11 +102,7 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
   const save = ctx.handle("save-settings", input => {
     assertActive();
     if (!record(input)) throw new Error("Expected language coach settings.");
-    const next: StoredSettings = { ...settings };
-    if ("key" in input && input.key !== undefined) next.azureSpeechKey = readSpeechKey(input);
-    if ("region" in input && typeof input.region === "string") next.azureRegion = normalizeRegion(input.region);
-    if ("targetLanguage" in input && input.targetLanguage !== undefined) next.targetLanguage = normalizeTargetLanguage(input.targetLanguage);
-    if ("firstLanguage" in input && input.firstLanguage !== undefined) next.firstLanguage = normalizeFirstLanguage(input.firstLanguage);
+    const next = mergeSettings(settings, input);
     saveSettings(ctx.dataDirectory, next);
     Object.assign(settings, next);
     const published: PublicSettings = publicSettings(settings);

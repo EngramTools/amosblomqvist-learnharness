@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import type { IncomingHttpHeaders } from "node:http";
+import type { IncomingHttpHeaders, ServerResponse } from "node:http";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assess } from "../src/azure-judge.ts";
+import type { AssessmentOk, AssessmentResult, CoachLocale } from "../src/judge-types.ts";
 import { buildPronunciationAssessmentHeader } from "../src/pronunciation-header.ts";
 import { encodeWav16kMono } from "../src/wav-encoder.ts";
-import { sendJson, stubSpeechServer } from "./support/http-stub.ts";
+import { sendJson, stubSpeechServer, type StubRequest, type StubServer } from "./support/http-stub.ts";
 
 const fixtureRoot = path.dirname(fileURLToPath(import.meta.url));
+const UNEXPECTED_PAYLOAD = "Azure returned an unexpected pronunciation payload.";
+
+type Entry = Record<string, unknown>;
+type Responder = (request: StubRequest, response: ServerResponse) => void;
+type AssessOptions = { locale?: CoachLocale; referenceText?: string; timeoutMs?: number; region?: string };
 
 function sampleClip(): Uint8Array {
   return encodeWav16kMono(new Float32Array(1600), 16_000);
@@ -30,63 +36,115 @@ function isPcmWav(body: Buffer): boolean {
   return body.length >= 44 && body.subarray(0, 4).toString("ascii") === "RIFF" && body.subarray(8, 12).toString("ascii") === "WAVE";
 }
 
-const stubs: Stub[] = [];
+const stubs: StubServer[] = [];
 after(async () => { for (const stub of stubs) await stub.close(); });
 
-type Stub = Awaited<ReturnType<typeof stubSpeechServer>>;
+const respondJson = (body: unknown): Responder => (_request, response) => sendJson(response, 200, body);
+
+/** Runs one assessment against a throwaway Speech stub that answers with `respond`. */
+async function assessVia(respond: Responder, options: AssessOptions = {}): Promise<AssessmentResult> {
+  const stub = await stubSpeechServer(respond);
+  stubs.push(stub);
+  return assess(sampleClip(), options.referenceText ?? "hello", options.locale ?? "en-US", {
+    subscriptionKey: "azure-key",
+    region: options.region ?? "westus",
+    endpointBase: stub.host,
+    timeoutMs: options.timeoutMs,
+  });
+}
+
+function assertOk(result: AssessmentResult): AssessmentOk {
+  assert.ok(result.status === "ok");
+  return result;
+}
+
+function assertUnavailable(result: AssessmentResult, reason: string | RegExp): void {
+  assert.ok(result.status === "unavailable");
+  if (typeof reason === "string") assert.equal(result.reason, reason);
+  else assert.match(result.reason, reason);
+}
+
+/** The REST shape: Azure reports the scores flat on the best entry and on its words and phonemes. */
+function restBody(parts: { best?: Entry; word?: Entry; phoneme?: Entry } = {}): Entry {
+  return {
+    RecognitionStatus: "Success",
+    NBest: [{
+      AccuracyScore: 88,
+      FluencyScore: 90,
+      CompletenessScore: 95,
+      ProsodyScore: 72,
+      ...parts.best,
+      Words: [{
+        Word: "think",
+        AccuracyScore: 70,
+        ...parts.word,
+        Phonemes: [{
+          Phoneme: "θ",
+          AccuracyScore: 42,
+          NBestPhonemes: [{ Phoneme: "s" }, { Phoneme: "θ" }],
+          ...parts.phoneme,
+        }],
+      }],
+    }],
+  };
+}
 
 test("assess sends 16 kHz mono PCM WAV with scripted pronunciation headers for en-US", async () => {
-  const fixture = readFixture("azure-en-us.json");
-  const stub = await stubSpeechServer((request, response) => {
+  const result = await assessVia((request, response) => {
     assert.equal(request.method, "POST");
     assert.match(request.path ?? "", /language=en-US/);
+    assert.match(request.path ?? "", /&format=detailed$/);
+    assert.equal(request.headers["ocp-apim-subscription-key"], "azure-key");
     assert.equal(request.headers["content-type"], "audio/wav; codecs=audio/pcm; samplerate=16000");
     assert.ok(isPcmWav(request.body));
-    const header = parseHeader(request.headers);
-    assert.equal(header.ReferenceText, "think");
-    assert.equal(header.PhonemeAlphabet, "IPA");
-    assert.equal(header.NBestPhonemeCount, 5);
-    assert.equal(header.EnableProsodyAssessment, true);
-    sendJson(response, 200, fixture);
-  });
-  stubs.push(stub);
-
-  const result = await assess(sampleClip(), "think", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: stub.host,
-  });
-  assert.equal(result.status, "ok");
-  if (result.status !== "ok") return;
-  assert.deepEqual(result.words, [{ word: "think", score: 70 }]);
-  assert.equal(result.phonemes?.length, 2);
-  assert.deepEqual(result.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ", "f", "t", "ð"] });
-  assert.equal(result.scores.accuracy, 88);
-  assert.equal(result.scores.prosody, 72);
+    assert.deepEqual(parseHeader(request.headers), {
+      ReferenceText: "think",
+      GradingSystem: "HundredMark",
+      Granularity: "Phoneme",
+      Dimension: "Comprehensive",
+      EnableMiscue: true,
+      PhonemeAlphabet: "IPA",
+      NBestPhonemeCount: 5,
+      EnableProsodyAssessment: true,
+    });
+    sendJson(response, 200, readFixture("azure-en-us.json"));
+  }, { referenceText: "think" });
+  const ok = assertOk(result);
+  assert.deepEqual(ok.words, [{ word: "think", score: 70 }]);
+  assert.equal(ok.phonemes?.length, 2);
+  assert.deepEqual(ok.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ", "f", "t", "ð"] });
+  assert.equal(ok.scores.accuracy, 88);
+  assert.equal(ok.scores.prosody, 72);
 });
 
 test("assess omits prosody and maps zh-CN syllables with pinyin", async () => {
-  const fixture = readFixture("azure-zh-cn.json");
-  const stub = await stubSpeechServer((request, response) => {
-    const header = parseHeader(request.headers);
-    assert.equal(header.EnableProsodyAssessment, undefined);
-    sendJson(response, 200, fixture);
-  });
-  stubs.push(stub);
-
-  const result = await assess(sampleClip(), "你好", "zh-CN", {
-    subscriptionKey: "azure-key",
-    region: "eastasia",
-    endpointBase: stub.host,
-  });
-  assert.equal(result.status, "ok");
-  if (result.status !== "ok") return;
-  assert.deepEqual(result.syllables, [
+  const result = await assessVia((request, response) => {
+    assert.equal(parseHeader(request.headers).EnableProsodyAssessment, undefined);
+    sendJson(response, 200, readFixture("azure-zh-cn.json"));
+  }, { locale: "zh-CN", referenceText: "你好", region: "eastasia" });
+  const ok = assertOk(result);
+  assert.deepEqual(ok.syllables, [
     { syllable: "ni3", pinyin: "nǐ", score: 78 },
     { syllable: "hao3", pinyin: "hǎo", score: 84 },
   ]);
-  assert.equal(result.phonemes, undefined);
-  assert.equal(result.scores.prosody, undefined);
+  assert.equal(ok.phonemes, undefined);
+  assert.equal(ok.scores.prosody, undefined);
+});
+
+test("assess posts the trimmed key to the regional Speech host by default", async () => {
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  const stubFetch = (async (url: string, init: { headers: Record<string, string> }) => {
+    calls.push({ url, headers: init.headers });
+    return Response.json(restBody());
+  }) as unknown as typeof fetch;
+  const result = await assess(sampleClip(), "think", "en-US", { subscriptionKey: "  azure-key  ", region: " westus ", fetch: stubFetch });
+  assertOk(result);
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0]?.url,
+    "https://westus.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US&format=detailed",
+  );
+  assert.equal(calls[0]?.headers["Ocp-Apim-Subscription-Key"], "azure-key");
 });
 
 test("assess returns unavailable without a key", async () => {
@@ -95,56 +153,27 @@ test("assess returns unavailable without a key", async () => {
 });
 
 test("assess returns unavailable on Azure HTTP errors and timeouts", async () => {
-  const errorStub = await stubSpeechServer((_request, response) => sendJson(response, 503, { error: "busy" }));
-  stubs.push(errorStub);
-  const errorResult = await assess(sampleClip(), "hello", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: errorStub.host,
-  });
-  assert.equal(errorResult.status, "unavailable");
-  if (errorResult.status === "unavailable") assert.match(errorResult.reason, /503/);
+  const errorResult = await assessVia((_request, response) => sendJson(response, 503, { error: "busy" }));
+  assertUnavailable(errorResult, /503/);
 
-  const hangStub = await stubSpeechServer(() => {});
-  stubs.push(hangStub);
-  const timeoutResult = await assess(sampleClip(), "hello", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: hangStub.host,
-    timeoutMs: 25,
-  });
-  assert.deepEqual(timeoutResult, { status: "unavailable", reason: "Azure pronunciation assessment timed out." });
+  const timeoutResult = await assessVia(() => {}, { timeoutMs: 25 });
+  assertUnavailable(timeoutResult, "Azure pronunciation assessment timed out.");
 });
 
 test("assess returns unavailable when Azure sends an unreadable body", async () => {
-  const stub = await stubSpeechServer((_request, response) => {
+  const result = await assessVia((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end("{ not json");
-  });
-  stubs.push(stub);
-
-  const result = await assess(sampleClip(), "hello", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: stub.host,
   });
   assert.equal(result.status, "unavailable");
 });
 
 test("assess returns unavailable when the response body times out", async () => {
-  const stub = await stubSpeechServer((_request, response) => {
+  const result = await assessVia((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.write("{\"NBest\":");
-  });
-  stubs.push(stub);
-
-  const result = await assess(sampleClip(), "hello", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: stub.host,
-    timeoutMs: 50,
-  });
-  assert.deepEqual(result, { status: "unavailable", reason: "Azure pronunciation assessment timed out." });
+  }, { timeoutMs: 50 });
+  assertUnavailable(result, "Azure pronunciation assessment timed out.");
 });
 
 test("the pronunciation header is Base64-encoded JSON that keeps non-ASCII reference text", () => {
@@ -154,56 +183,61 @@ test("the pronunciation header is Base64-encoded JSON that keeps non-ASCII refer
   assert.equal(parsed.ReferenceText, "你好 😀");
 });
 
-// Azure's REST endpoint reports the scores flat on the best entry and its words; the Speech SDK nests
-// them under PronunciationAssessment, which is the shape the fixtures above still use.
+// Azure's REST endpoint reports the scores flat; the Speech SDK nests them under PronunciationAssessment,
+// which is the shape the fixtures above still use.
 test("the REST response shape maps the scores Azure returns on the best entry and its words", async () => {
-  const stub = await stubSpeechServer((_request, response) => {
-    sendJson(response, 200, {
-      RecognitionStatus: "Success",
-      NBest: [{
-        AccuracyScore: 88,
-        FluencyScore: 90,
-        CompletenessScore: 95,
-        ProsodyScore: 72,
-        Words: [{
-          Word: "think",
-          AccuracyScore: 70,
-          Phonemes: [{
-            Phoneme: "θ",
-            AccuracyScore: 42,
-            NBestPhonemes: [{ Phoneme: "s" }, { Phoneme: "θ" }],
-          }],
-        }],
-      }],
-    });
-  });
-  stubs.push(stub);
-
-  const result = await assess(sampleClip(), "think", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: stub.host,
-  });
-  assert.equal(result.status, "ok");
-  if (result.status !== "ok") return;
-  assert.equal(result.scores.accuracy, 88);
-  assert.equal(result.scores.fluency, 90);
-  assert.equal(result.scores.completeness, 95);
-  assert.equal(result.scores.prosody, 72);
-  assert.deepEqual(result.words, [{ word: "think", score: 70 }]);
-  assert.deepEqual(result.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ"] });
+  const ok = assertOk(await assessVia(respondJson(restBody())));
+  assert.equal(ok.scores.accuracy, 88);
+  assert.equal(ok.scores.fluency, 90);
+  assert.equal(ok.scores.completeness, 95);
+  assert.equal(ok.scores.prosody, 72);
+  assert.deepEqual(ok.words, [{ word: "think", score: 70 }]);
+  assert.deepEqual(ok.phonemes?.[0], { phoneme: "θ", score: 42, heard: ["s", "θ"] });
 });
 
-test("a NoMatch response is unavailable instead of a zero-score assessment", async () => {
-  const stub = await stubSpeechServer((_request, response) => {
-    sendJson(response, 200, { RecognitionStatus: "NoMatch", NBest: [{ Words: [] }] });
-  });
-  stubs.push(stub);
+const READABLE_STATUSES: [string, string][] = [
+  ["NoMatch", "Azure could not recognise any speech in the recording."],
+  ["InitialSilenceTimeout", "Azure heard only silence at the start of the recording."],
+  ["BabbleTimeout", "Azure heard only background noise in the recording."],
+  ["Error", "Azure could not process the recording."],
+  ["SomethingNew", "Azure recognition status was SomethingNew."],
+];
 
-  const result = await assess(sampleClip(), "hello", "en-US", {
-    subscriptionKey: "azure-key",
-    region: "westus",
-    endpointBase: stub.host,
+for (const [status, reason] of READABLE_STATUSES) {
+  test(`a ${status} response is unavailable with a readable reason, never a zero-score assessment`, async () => {
+    const result = await assessVia(respondJson({ RecognitionStatus: status, NBest: [{ Words: [] }] }));
+    assertUnavailable(result, reason);
   });
-  assert.equal(result.status, "unavailable");
+}
+
+test("a Success response without any assessment fields is unavailable, never a zero score", async () => {
+  const result = await assessVia(respondJson({ RecognitionStatus: "Success", NBest: [{ Display: "Hello." }] }));
+  assertUnavailable(result, UNEXPECTED_PAYLOAD);
+});
+
+const MISSING_SCORES: [string, Parameters<typeof restBody>[0]][] = [
+  ["accuracy", { best: { AccuracyScore: undefined } }],
+  ["fluency", { best: { FluencyScore: undefined } }],
+  ["completeness", { best: { CompletenessScore: undefined } }],
+  ["a non-numeric accuracy", { best: { AccuracyScore: "88" } }],
+  ["a word", { word: { AccuracyScore: undefined } }],
+  ["a phoneme", { phoneme: { AccuracyScore: undefined } }],
+];
+
+for (const [name, parts] of MISSING_SCORES) {
+  test(`a response missing ${name} score is unavailable instead of a zero`, async () => {
+    assertUnavailable(await assessVia(respondJson(restBody(parts))), UNEXPECTED_PAYLOAD);
+  });
+}
+
+test("a zh-CN response with a syllable that has no score is unavailable instead of a zero", async () => {
+  const body = restBody();
+  (body.NBest as Entry[])[0]!.Words = [{ Word: "你好", AccuracyScore: 80, Syllables: [{ Syllable: "ni3", Pinyin: "nǐ" }] }];
+  assertUnavailable(await assessVia(respondJson(body), { locale: "zh-CN" }), UNEXPECTED_PAYLOAD);
+});
+
+test("an explicit zero score is a real score", async () => {
+  const ok = assertOk(await assessVia(respondJson(restBody({ best: { AccuracyScore: 0 }, word: { AccuracyScore: 0 } }))));
+  assert.equal(ok.scores.accuracy, 0);
+  assert.deepEqual(ok.words, [{ word: "think", score: 0 }]);
 });

@@ -63,25 +63,34 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** A stored string field that is trimmed, non-blank and within its length cap. */
+function storedText(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text && text.length <= maxLength ? text : undefined;
+}
+
+function storedRegion(value: unknown): string | undefined {
+  const region = storedText(value, REGION_MAX_LENGTH);
+  return region && REGION_PATTERN.test(region) ? region : undefined;
+}
+
+function storedTarget(value: unknown): CoachLocale | undefined {
+  return value === "en-US" || value === "zh-CN" ? value : undefined;
+}
+
+/** Drops anything missing or invalid, so a damaged file loads as fewer settings rather than failing. */
 export function loadSettings(directory: string): StoredSettings {
   try {
     const value: unknown = JSON.parse(fs.readFileSync(settingsFile(directory), "utf8"));
     if (!record(value)) return {};
-    const settings: StoredSettings = {};
-    if (typeof value.azureSpeechKey === "string") {
-      const key = value.azureSpeechKey.trim();
-      if (key && key.length <= SPEECH_KEY_MAX_LENGTH) settings.azureSpeechKey = key;
-    }
-    if (typeof value.azureRegion === "string") {
-      const region = value.azureRegion.trim();
-      if (region && region.length <= REGION_MAX_LENGTH && REGION_PATTERN.test(region)) settings.azureRegion = region;
-    }
-    if (value.targetLanguage === "en-US" || value.targetLanguage === "zh-CN") settings.targetLanguage = value.targetLanguage;
-    if (typeof value.firstLanguage === "string") {
-      const first = value.firstLanguage.trim();
-      if (first && first.length <= FIRST_LANGUAGE_MAX_LENGTH) settings.firstLanguage = first;
-    }
-    return settings;
+    const fields: StoredSettings = {
+      azureSpeechKey: storedText(value.azureSpeechKey, SPEECH_KEY_MAX_LENGTH),
+      azureRegion: storedRegion(value.azureRegion),
+      targetLanguage: storedTarget(value.targetLanguage),
+      firstLanguage: storedText(value.firstLanguage, FIRST_LANGUAGE_MAX_LENGTH),
+    };
+    return Object.fromEntries(Object.entries(fields).filter(([, field]) => field !== undefined));
   } catch {
     return {};
   }
