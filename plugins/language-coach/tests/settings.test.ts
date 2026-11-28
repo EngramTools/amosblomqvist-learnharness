@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { parseHTML } from "linkedom";
 import type { PluginCleanup, PluginFrontendContext, PluginSettingsRegistration } from "learnharness-plugin-api";
 import { activate } from "../src/main.ts";
-import { SPEECH_KEY_DESCRIPTION, SPEECH_KEY_LABEL } from "../src/settings-view.ts";
+import { readPublicSettings, SPEECH_KEY_DESCRIPTION, SPEECH_KEY_LABEL, TONEPERFECT_KEY_LABEL } from "../src/settings-view.ts";
 
 type Mount = (container: HTMLElement, signal: AbortSignal) => void | PluginCleanup | Promise<void | PluginCleanup>;
 
@@ -20,7 +20,7 @@ function nextAssessment(options: FixtureOptions): unknown {
 async function settingsReply(hold: FixtureOptions["holdSettings"]): Promise<unknown> {
   await hold?.until;
   if (hold?.fail) throw new Error("The settings could not be read.");
-  return { configured: false, region: hold?.region ?? "" };
+  return { configured: false, region: hold?.region ?? "", tonePerfectConfigured: false };
 }
 
 async function answer(options: FixtureOptions, operation: string): Promise<unknown> {
@@ -30,7 +30,7 @@ async function answer(options: FixtureOptions, operation: string): Promise<unkno
     throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The settings could not be saved.");
   }
   if (operation === "assess-pronunciation") return nextAssessment(options);
-  return { configured: true, region: "westus", targetLanguage: "en-US", firstLanguage: "en" };
+  return { configured: true, region: "westus", tonePerfectConfigured: true, targetLanguage: "en-US", firstLanguage: "en" };
 }
 
 type FixtureOptions = {
@@ -173,10 +173,40 @@ test("the settings row masks the key and exposes only configured and region", as
   assert.equal((f.calls[2]?.input as { key?: string }).key, "speech-secret");
   assert.equal(container.textContent!.includes("speech-secret"), false);
 
-  f.notify!({ topic: "settings-changed", data: { configured: true, region: "westus", targetLanguage: "zh-CN", firstLanguage: "en" } });
+  f.notify!({ topic: "settings-changed", data: { configured: true, region: "westus", tonePerfectConfigured: false, targetLanguage: "zh-CN", firstLanguage: "en" } });
   assert.match((container.querySelector("input[type=password]") as HTMLInputElement).placeholder, /Saved key/);
   dispose();
   controller.abort();
+});
+
+test("the TonePerfect key is a separate masked field that saves backend-only", async () => {
+  const { f, container, controller } = await mounted();
+  const field = container.querySelector("#lh-language-coach-toneperfect-key") as HTMLInputElement;
+  assert.equal(field.getAttribute("type"), "password");
+  assert.match(container.textContent!, new RegExp(TONEPERFECT_KEY_LABEL));
+
+  field.value = "toneperfect-secret";
+  fire(f.document, container.querySelector("form")!, "submit");
+  await settle();
+
+  const save = f.calls.find(call => call.operation === "save-settings");
+  const savedInput = save?.input;
+  assert.ok(savedInput !== null && typeof savedInput === "object" && "tonePerfectKey" in savedInput);
+  assert.equal(savedInput.tonePerfectKey, "toneperfect-secret");
+  assert.equal(container.textContent!.includes("toneperfect-secret"), false);
+  assert.equal(field.value, "");
+  assert.match(field.placeholder, /Saved key/);
+  controller.abort();
+});
+
+test("the frontend reads back only whether the TonePerfect key is configured", () => {
+  const settings = readPublicSettings({
+    configured: false,
+    region: "westus",
+    tonePerfectConfigured: true,
+    tonePerfectKey: "toneperfect-secret",
+  });
+  assert.deepEqual(settings, { configured: false, region: "westus", tonePerfectConfigured: true });
 });
 
 test("a save failure never echoes the key into the status", async () => {
