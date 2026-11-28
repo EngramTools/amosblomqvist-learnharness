@@ -178,9 +178,9 @@ Restart LearnHarness to load updates to already-loaded code.
 Keep the same project layout and build locally. Either copy the completed `dist/` into
 `<plugins-directory>/<plugin-id>/dist/`, or use the portable local installer.
 
-1. Copy `tools/install-plugin-local.mjs` from the extracted authoring skill into your
-   project's `scripts/install-plugin-local.mjs`. In a LearnHarness checkout the same
-   helper lives at `scripts/install-plugin-local.mjs`.
+1. Copy `tools/install-plugin-local.mjs` and `tools/plugin-dist-validate.mjs` from the
+   extracted authoring skill into your project's `scripts/` directory. In a LearnHarness
+   checkout the same helpers live under `scripts/`.
 2. Add this script to the plugin's `package.json`, alongside its existing `build` script:
 
    ```json
