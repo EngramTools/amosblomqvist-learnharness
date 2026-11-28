@@ -4,7 +4,7 @@
   "name": "Language coach",
   "version": "0.1.0",
   "minAppVersion": "0.7.0",
-  "description": "Pronunciation coaching with Azure scripted assessment, clip recording, and plugin settings for speech keys.",
+  "description": "Pronunciation coaching with Azure and TonePerfect scripted assessment, clip recording, and plugin settings for speech keys.",
   "main": "main.js",
   "backend": "backend.cjs",
   "styles": "styles.css"

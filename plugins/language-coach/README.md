@@ -1,16 +1,16 @@
 # Language coach
 
-Community plugin scaffold for pronunciation coaching: Azure Speech settings, a short
+Community plugin scaffold for pronunciation coaching: speech-provider settings, a short
 clip recorder, and scripted pronunciation assessment behind a provider-neutral judge
-interface. Azure is the only assessment provider wired up today; the judge interface
-keeps the assessment behind one seam, so a second provider can be added there — the
-settings UI still names Azure's key and region, so it would need provider settings of
-its own.
+interface. Azure assesses both target languages; when a TonePerfect key is saved it
+assesses Mandarin (`zh-CN`), adding per-syllable initial, final and tone decisions.
 
 ## Settings
 
 - Azure Speech key — stored in this plugin's data directory and never handed to the
   frontend; the settings row only shows whether a key is saved.
+- TonePerfect key — stored the same way. When it is set and the target language is
+  `zh-CN`, Mandarin assessment uses TonePerfect; otherwise Azure assesses the clip.
 - Azure Speech region — editable in the settings row, stored next to the key.
 - Target language: `en-US` or `zh-CN`.
 - Learner first language — saved with the coach profile (`coachProfile()` in
@@ -46,4 +46,7 @@ short-audio pronunciation endpoint with scripted grading:
   is listed separately in the International Phonetic Alphabet, with the alternative
   phonemes Azure heard for it.
 - *syllable-level scoring* (Mandarin) — every syllable of a word is scored separately
-  and reported with its pinyin spelling.
+  and reported with its pinyin spelling. With a TonePerfect key, each syllable also
+  carries its initial, final and tone rows with the expected and heard sound, score and
+  the provider's `review` / `uncertain` / `no_correction` decision; the decision, not
+  the raw score, is what consumers act on.

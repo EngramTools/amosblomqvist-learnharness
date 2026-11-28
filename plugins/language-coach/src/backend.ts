@@ -1,6 +1,7 @@
 import type { PluginBackendContext } from "learnharness-plugin-api";
-import type { AssessmentResult, CoachLocale } from "./judge-types.ts";
+import type { AssessmentResult, CoachLocale, PronunciationJudge } from "./judge-types.ts";
 import { assess, createAzureJudge, type AzureJudgeRuntime } from "./azure-judge.ts";
+import { createTonePerfectJudge, type TonePerfectJudgeRuntime } from "./toneperfect-judge.ts";
 import { RECORDING_LIMIT_MS } from "./recorder.ts";
 import {
   loadSettings,
@@ -10,6 +11,7 @@ import {
   coachProfile,
   publicSettings,
   readSpeechKey,
+  readTonePerfectKey,
   saveSettings,
   type CoachProfile,
   type PublicSettings,
@@ -18,6 +20,7 @@ import {
 
 export type LanguageCoachBackendOptions = {
   judge?: AzureJudgeRuntime;
+  tonePerfectJudge?: TonePerfectJudgeRuntime;
 };
 
 /** 30 s of 16 kHz mono 16-bit PCM plus the WAV header. */
@@ -66,10 +69,16 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function judgeFor(settings: StoredSettings, runtime?: AzureJudgeRuntime) {
-  const key = settings.azureSpeechKey ?? "";
-  const region = settings.azureRegion ?? "";
-  return createAzureJudge({ subscriptionKey: key, region, ...runtime });
+function judgeFor(settings: StoredSettings, locale: CoachLocale, options: LanguageCoachBackendOptions): PronunciationJudge {
+  const tonePerfectKey = settings.tonePerfectKey ?? "";
+  if (locale === "zh-CN" && tonePerfectKey) {
+    return createTonePerfectJudge({ apiKey: tonePerfectKey, ...options.tonePerfectJudge });
+  }
+  return createAzureJudge({
+    subscriptionKey: settings.azureSpeechKey ?? "",
+    region: settings.azureRegion ?? "",
+    ...options.judge,
+  });
 }
 
 /** Apply only the fields the caller sent, validating each one. */
@@ -77,6 +86,7 @@ function mergeSettings(settings: StoredSettings, input: Record<string, unknown>)
   const next: StoredSettings = { ...settings };
   if (input.key !== undefined) next.azureSpeechKey = readSpeechKey(input);
   if (typeof input.region === "string") next.azureRegion = normalizeRegion(input.region);
+  if (input.tonePerfectKey !== undefined) next.tonePerfectKey = readTonePerfectKey(input);
   if (input.targetLanguage !== undefined) next.targetLanguage = normalizeTargetLanguage(input.targetLanguage);
   if (input.firstLanguage !== undefined) next.firstLanguage = normalizeFirstLanguage(input.firstLanguage);
   return next;
@@ -115,7 +125,7 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     const clip = decodeClip(input);
     const referenceText = readReferenceText(input);
     const locale = readLocale(input, settings);
-    return judgeFor(settings, options.judge).assess(clip, referenceText, locale);
+    return judgeFor(settings, locale, options).assess(clip, referenceText, locale);
   });
 
   return () => {

@@ -4,12 +4,14 @@ import { randomUUID } from "node:crypto";
 import type { CoachLocale } from "./judge-types.ts";
 
 export const SPEECH_KEY_MAX_LENGTH = 4096;
+export const TONEPERFECT_KEY_MAX_LENGTH = 4096;
 export const REGION_MAX_LENGTH = 64;
 export const FIRST_LANGUAGE_MAX_LENGTH = 64;
 
 export type StoredSettings = {
   azureSpeechKey?: string;
   azureRegion?: string;
+  tonePerfectKey?: string;
   targetLanguage?: CoachLocale;
   firstLanguage?: string;
 };
@@ -17,6 +19,7 @@ export type StoredSettings = {
 export type PublicSettings = {
   configured: boolean;
   region: string;
+  tonePerfectConfigured: boolean;
 };
 
 export type CoachProfile = {
@@ -38,12 +41,42 @@ export function normalizeRegion(input: string): string {
   return region;
 }
 
-export function readSpeechKey(input: unknown): string {
-  if (!record(input) || typeof input.key !== "string") throw new Error("Expected an Azure Speech key.");
-  const key = input.key.trim();
-  if (!key) throw new Error("The Azure Speech key must not be blank.");
-  if (key.length > SPEECH_KEY_MAX_LENGTH) throw new Error("The Azure Speech key is too long.");
+type KeyRule = {
+  field: string;
+  name: string;
+  expected: string;
+  maxLength: number;
+};
+
+const AZURE_KEY_RULE: KeyRule = {
+  field: "key",
+  name: "Azure Speech",
+  expected: "Expected an Azure Speech key.",
+  maxLength: SPEECH_KEY_MAX_LENGTH,
+};
+
+const TONEPERFECT_KEY_RULE: KeyRule = {
+  field: "tonePerfectKey",
+  name: "TonePerfect",
+  expected: "Expected a TonePerfect key.",
+  maxLength: TONEPERFECT_KEY_MAX_LENGTH,
+};
+
+function readKey(input: unknown, rule: KeyRule): string {
+  const value = record(input) ? input[rule.field] : undefined;
+  if (typeof value !== "string") throw new Error(rule.expected);
+  const key = value.trim();
+  if (!key) throw new Error(`The ${rule.name} key must not be blank.`);
+  if (key.length > rule.maxLength) throw new Error(`The ${rule.name} key is too long.`);
   return key;
+}
+
+export function readSpeechKey(input: unknown): string {
+  return readKey(input, AZURE_KEY_RULE);
+}
+
+export function readTonePerfectKey(input: unknown): string {
+  return readKey(input, TONEPERFECT_KEY_RULE);
 }
 
 export function normalizeTargetLanguage(input: unknown): CoachLocale {
@@ -87,6 +120,7 @@ export function loadSettings(directory: string): StoredSettings {
     const fields: StoredSettings = {
       azureSpeechKey: storedText(value.azureSpeechKey, SPEECH_KEY_MAX_LENGTH),
       azureRegion: storedRegion(value.azureRegion),
+      tonePerfectKey: storedText(value.tonePerfectKey, TONEPERFECT_KEY_MAX_LENGTH),
       targetLanguage: storedTarget(value.targetLanguage),
       firstLanguage: storedText(value.firstLanguage, FIRST_LANGUAGE_MAX_LENGTH),
     };
@@ -112,6 +146,7 @@ export function publicSettings(settings: StoredSettings): PublicSettings {
   return {
     configured: Boolean(settings.azureSpeechKey),
     region: settings.azureRegion ?? "",
+    tonePerfectConfigured: Boolean(settings.tonePerfectKey),
   };
 }
 

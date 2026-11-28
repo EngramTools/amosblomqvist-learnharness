@@ -1,0 +1,1174 @@
+{
+  "language": "zh",
+  "locale": "zh-CN",
+  "model_version": "mandarin-human-v2-85741cdf3967-fbf73d85ee88+scoremap-5",
+  "task": "general",
+  "assessable": true,
+  "reason": null,
+  "status": "completed",
+  "scores": {
+    "overall": 74.3,
+    "pronunciation": 74.6,
+    "initial": 74.3,
+    "final": 93.2,
+    "tone": 94.0,
+    "fluency": null,
+    "rhythm": null,
+    "integrity": 100.0
+  },
+  "words": [
+    {
+      "word": "你",
+      "pinyin": "ni3",
+      "score": 65.6,
+      "phones": [
+        {
+          "phone": "ini n",
+          "dimension": "initial",
+          "score": 65.6,
+          "native_percentile": 0.5,
+          "prob_accept": 75.5,
+          "start": 0.02,
+          "end": 0.224,
+          "known": true,
+          "heard": "l",
+          "expected": "n",
+          "decision": "uncertain",
+          "flagged": false,
+          "acceptance_probability": 0.755,
+          "below_native_range": true,
+          "baseline_decision": "review",
+          "decision_source": "zh_round7",
+          "heard_raw": "l",
+          "flagged_raw": true,
+          "score_v1": 5.6,
+          "decision_v1": "no_correction",
+          "heard_v1": "n",
+          "reason": "heard_as_other"
+        },
+        {
+          "phone": "fin i",
+          "dimension": "final",
+          "score": 94.2,
+          "native_percentile": 66.5,
+          "prob_accept": 99.9,
+          "start": 0.02,
+          "end": 0.224,
+          "known": true,
+          "heard": "i",
+          "expected": "i",
+          "decision": "no_correction",
+          "flagged": false,
+          "acceptance_probability": 0.9990000000000001,
+          "human_risk": 0.0027769348908188818,
+          "human_acceptance_probability": 0.9972230651091811,
+          "human_risk_spread": 0.0008240552639310119,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "score_v1": 99.7
+        },
+        {
+          "phone": "ton 3",
+          "dimension": "tone",
+          "score": 92.8,
+          "native_percentile": 2.6,
+          "prob_accept": 93.5,
+          "start": 0.02,
+          "end": 0.224,
+          "known": true,
+          "heard": 3,
+          "expected": 3,
+          "decision": "no_correction",
+          "flagged": false,
+          "acceptance_probability": 0.935,
+          "human_risk": 0.12168164356275087,
+          "human_acceptance_probability": 0.8783183564372491,
+          "human_risk_spread": 0.05959819310835543,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "human_expected_tone": 3,
+          "human_surface_tone": 2,
+          "display_grade": 77.5,
+          "score_v1": 78.9
+        }
+      ],
+      "start_ms": 20,
+      "end_ms": 224,
+      "decision": "uncertain",
+      "check": {
+        "verdict": "ok",
+        "score": 51.4,
+        "error_dimensions": [],
+        "variant_dimensions": []
+      },
+      "phone_average_score": 98.2,
+      "decision_v1": "no_correction"
+    },
+    {
+      "word": "好",
+      "pinyin": "hao3",
+      "score": 83.0,
+      "phones": [
+        {
+          "phone": "ini h",
+          "dimension": "initial",
+          "score": 83.0,
+          "native_percentile": 7.0,
+          "prob_accept": 99.6,
+          "start": 0.224,
+          "end": 0.661,
+          "known": true,
+          "heard": "h",
+          "expected": "h",
+          "decision": "no_correction",
+          "flagged": false,
+          "acceptance_probability": 0.996,
+          "score_v1": 94.3
+        },
+        {
+          "phone": "fin ao",
+          "dimension": "final",
+          "score": 92.3,
+          "native_percentile": 36.2,
+          "prob_accept": 99.9,
+          "start": 0.224,
+          "end": 0.661,
+          "known": true,
+          "heard": "ao",
+          "expected": "ao",
+          "decision": "no_correction",
+          "flagged": false,
+          "acceptance_probability": 0.9990000000000001,
+          "human_risk": 0.003647505580548846,
+          "human_acceptance_probability": 0.9963524944194512,
+          "human_risk_spread": 0.00074141763518307,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "score_v1": 99.4
+        },
+        {
+          "phone": "ton 3",
+          "dimension": "tone",
+          "score": 95.2,
+          "native_percentile": 13.1,
+          "prob_accept": 96.5,
+          "start": 0.224,
+          "end": 0.661,
+          "known": true,
+          "heard": 3,
+          "expected": 3,
+          "decision": "no_correction",
+          "flagged": false,
+          "acceptance_probability": 0.965,
+          "human_risk": 0.03825174904424948,
+          "human_acceptance_probability": 0.9617482509557506,
+          "human_risk_spread": 0.007354908102389806,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "human_expected_tone": 3,
+          "human_surface_tone": 3,
+          "display_grade": 92.3,
+          "score_v1": 90.1
+        }
+      ],
+      "start_ms": 224,
+      "end_ms": 661,
+      "decision": "no_correction",
+      "check": {
+        "verdict": "ok",
+        "score": 87.0,
+        "error_dimensions": [],
+        "variant_dimensions": []
+      },
+      "phone_average_score": 98.0
+    }
+  ],
+  "syllables": [
+    {
+      "index": 0,
+      "expected": {
+        "pinyin": "ni3",
+        "initial": "n",
+        "final": "i",
+        "tone": 3
+      },
+      "span_ms": [
+        20,
+        224
+      ],
+      "duration_ms": 203,
+      "assessable": true,
+      "components": {
+        "initial": {
+          "applicable": true,
+          "expected": "n",
+          "heard": "l",
+          "agrees_with_prompt": true,
+          "score": 65.6,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": -16.214,
+          "alternatives": [
+            {
+              "label": "n",
+              "probability": 0.0
+            },
+            {
+              "label": "l",
+              "probability": 1.0
+            },
+            {
+              "label": "d",
+              "probability": 0.0
+            },
+            {
+              "label": "0",
+              "probability": 0.0
+            }
+          ],
+          "confidence": "high",
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 88.8,
+            "precision_at_threshold": 0.247,
+            "recall_at_threshold": 0.269,
+            "base_error_rate": 0.0128,
+            "measured_on": "held-out speakers"
+          },
+          "acceptance_probability": 0.755,
+          "baseline_severity": "minor",
+          "decision": "uncertain",
+          "display_grade": 60.0,
+          "heard_raw": "l",
+          "flagged_raw": true,
+          "advice_raw": "Let the air pass through your nose and block it fully with the tongue. For 'l' the air escapes around the sides.",
+          "score_v1": 5.6,
+          "decision_v1": "review",
+          "heard_v1": "n",
+          "reason": "heard_as_other"
+        },
+        "final": {
+          "applicable": true,
+          "expected": "i",
+          "heard": "i",
+          "agrees_with_prompt": true,
+          "score": 94.2,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": 13.397,
+          "alternatives": [
+            {
+              "label": "i",
+              "probability": 1.0
+            },
+            {
+              "label": "ü",
+              "probability": 0.0
+            },
+            {
+              "label": "iou",
+              "probability": 0.0
+            },
+            {
+              "label": "ei",
+              "probability": 0.0
+            }
+          ],
+          "confidence": "high",
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 89.8,
+            "precision_at_threshold": 0.194,
+            "recall_at_threshold": 0.258,
+            "base_error_rate": 0.0138,
+            "measured_on": "held-out speakers"
+          },
+          "human_risk": 0.0027769348908188818,
+          "human_acceptance_probability": 0.9972230651091811,
+          "human_risk_spread": 0.0008240552639310119,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "acceptance_probability": 0.9990000000000001,
+          "baseline_severity": "ok",
+          "decision": "no_correction",
+          "display_grade": 97.1,
+          "score_v1": 99.7
+        },
+        "tone": {
+          "applicable": true,
+          "expected": 3,
+          "heard": 3,
+          "agrees_with_prompt": true,
+          "score": 92.8,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": 1.345,
+          "alternatives": [
+            {
+              "label": 3,
+              "probability": 0.7651
+            },
+            {
+              "label": 1,
+              "probability": 0.1992
+            },
+            {
+              "label": 4,
+              "probability": 0.0042
+            },
+            {
+              "label": 5,
+              "probability": 0.0017
+            }
+          ],
+          "confidence": "medium",
+          "tone_confidence": [
+            0.1992,
+            0.0297,
+            0.7651,
+            0.0042,
+            0.0017
+          ],
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 79.5,
+            "precision_at_threshold": 0.397,
+            "recall_at_threshold": 0.558,
+            "base_error_rate": 0.1,
+            "measured_on": "held-out speakers"
+          },
+          "human_risk": 0.12168164356275087,
+          "human_acceptance_probability": 0.8783183564372491,
+          "human_risk_spread": 0.05959819310835543,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "human_expected_tone": 3,
+          "human_surface_tone": 2,
+          "acceptance_probability": 0.935,
+          "baseline_severity": "ok",
+          "decision": "no_correction",
+          "display_grade": 77.5,
+          "score_v1": 78.9
+        }
+      },
+      "score": 65.6,
+      "advice": [],
+      "baseline_severity": "ok",
+      "tone_acoustics": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "r7": {
+        "any": 0.16922272027741703,
+        "tone": 0.06754393564637365,
+        "segment": 0.06859942015627958,
+        "flag": false,
+        "warn": false,
+        "dimension": "segment",
+        "scorable": true,
+        "engine_assessed": true,
+        "rc6c_any": 0.21101536407713534,
+        "zhoob_any": 0.1342983927046183
+      },
+      "warn": false,
+      "warn_dimension": null,
+      "check": {
+        "verdict": "ok",
+        "score": 51.4,
+        "dimensions": {
+          "initial": {
+            "expected": "n",
+            "heard": "l",
+            "evidence": 16.21,
+            "error_score": 8.39,
+            "verdict": "ok",
+            "grade": 51.4
+          },
+          "final": {
+            "expected": "i",
+            "heard": "i",
+            "evidence": -13.4,
+            "error_score": -21.22,
+            "verdict": "ok",
+            "grade": 94.8
+          },
+          "tone": {
+            "expected": 3,
+            "heard": 3,
+            "evidence": -1.38,
+            "error_score": -9.26,
+            "verdict": "ok",
+            "grade": 92.5
+          }
+        }
+      },
+      "score_v1": 98.2,
+      "advice_v1": [
+        "Let the air pass through your nose and block it fully with the tongue. For 'l' the air escapes around the sides."
+      ]
+    },
+    {
+      "index": 1,
+      "expected": {
+        "pinyin": "hao3",
+        "initial": "h",
+        "final": "ao",
+        "tone": 3
+      },
+      "span_ms": [
+        224,
+        661
+      ],
+      "duration_ms": 437,
+      "assessable": true,
+      "components": {
+        "initial": {
+          "applicable": true,
+          "expected": "h",
+          "heard": "h",
+          "agrees_with_prompt": true,
+          "score": 83.0,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": 5.613,
+          "alternatives": [
+            {
+              "label": "h",
+              "probability": 0.9898
+            },
+            {
+              "label": "0",
+              "probability": 0.0036
+            },
+            {
+              "label": "p",
+              "probability": 0.0026
+            },
+            {
+              "label": "m",
+              "probability": 0.002
+            }
+          ],
+          "confidence": "high",
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 88.8,
+            "precision_at_threshold": 0.247,
+            "recall_at_threshold": 0.269,
+            "base_error_rate": 0.0128,
+            "measured_on": "held-out speakers"
+          },
+          "acceptance_probability": 0.996,
+          "baseline_severity": "ok",
+          "decision": "no_correction",
+          "display_grade": 86.0,
+          "score_v1": 94.3
+        },
+        "final": {
+          "applicable": true,
+          "expected": "ao",
+          "heard": "ao",
+          "agrees_with_prompt": true,
+          "score": 92.3,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": 11.044,
+          "alternatives": [
+            {
+              "label": "ao",
+              "probability": 1.0
+            },
+            {
+              "label": "iao",
+              "probability": 0.0
+            },
+            {
+              "label": "ou",
+              "probability": 0.0
+            },
+            {
+              "label": "er",
+              "probability": 0.0
+            }
+          ],
+          "confidence": "high",
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 89.8,
+            "precision_at_threshold": 0.194,
+            "recall_at_threshold": 0.258,
+            "base_error_rate": 0.0138,
+            "measured_on": "held-out speakers"
+          },
+          "human_risk": 0.003647505580548846,
+          "human_acceptance_probability": 0.9963524944194512,
+          "human_risk_spread": 0.00074141763518307,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "acceptance_probability": 0.9990000000000001,
+          "baseline_severity": "ok",
+          "decision": "no_correction",
+          "display_grade": 94.4,
+          "score_v1": 99.4
+        },
+        "tone": {
+          "applicable": true,
+          "expected": 3,
+          "heard": 3,
+          "agrees_with_prompt": true,
+          "score": 95.2,
+          "score_means": "native-reference pronunciation quality grade, 0–100",
+          "margin": 3.629,
+          "alternatives": [
+            {
+              "label": 3,
+              "probability": 0.9588
+            },
+            {
+              "label": 1,
+              "probability": 0.0255
+            },
+            {
+              "label": 2,
+              "probability": 0.0139
+            },
+            {
+              "label": 4,
+              "probability": 0.0012
+            }
+          ],
+          "confidence": "high",
+          "tone_confidence": [
+            0.0255,
+            0.0139,
+            0.9588,
+            0.0012,
+            0.0006
+          ],
+          "advice": null,
+          "flagged": false,
+          "flag_reliability": {
+            "threshold": 79.5,
+            "precision_at_threshold": 0.397,
+            "recall_at_threshold": 0.558,
+            "base_error_rate": 0.1,
+            "measured_on": "held-out speakers"
+          },
+          "human_risk": 0.03825174904424948,
+          "human_acceptance_probability": 0.9617482509557506,
+          "human_risk_spread": 0.007354908102389806,
+          "human_correction_support": 0.0,
+          "human_decision": "no_correction",
+          "human_expected_tone": 3,
+          "human_surface_tone": 3,
+          "acceptance_probability": 0.965,
+          "baseline_severity": "ok",
+          "decision": "no_correction",
+          "display_grade": 92.3,
+          "score_v1": 90.1
+        }
+      },
+      "score": 83.0,
+      "advice": [],
+      "baseline_severity": "ok",
+      "tone_acoustics": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "r7": {
+        "any": 0.15277054078321894,
+        "tone": 0.060004656212582975,
+        "segment": 0.08731490298853371,
+        "flag": false,
+        "warn": false,
+        "dimension": "segment",
+        "scorable": true,
+        "engine_assessed": true,
+        "rc6c_any": 0.1880114451723443,
+        "zhoob_any": 0.1231335024089862
+      },
+      "warn": false,
+      "warn_dimension": null,
+      "check": {
+        "verdict": "ok",
+        "score": 87.0,
+        "dimensions": {
+          "initial": {
+            "expected": "h",
+            "heard": "h",
+            "evidence": -5.61,
+            "error_score": -12.65,
+            "verdict": "ok",
+            "grade": 87.0
+          },
+          "final": {
+            "expected": "ao",
+            "heard": "ao",
+            "evidence": -11.04,
+            "error_score": -18.08,
+            "verdict": "ok",
+            "grade": 93.1
+          },
+          "tone": {
+            "expected": 3,
+            "heard": 3,
+            "evidence": -3.63,
+            "error_score": -11.88,
+            "verdict": "ok",
+            "grade": 94.6
+          }
+        }
+      },
+      "score_v1": 98.0
+    }
+  ],
+  "duration_seconds": 1.061,
+  "heard": {
+    "phonetic_transcription": null,
+    "syllables": [
+      {
+        "initial": "n",
+        "final": "i",
+        "tone": 3
+      },
+      {
+        "initial": "h",
+        "final": "ao",
+        "tone": 3
+      }
+    ]
+  },
+  "warnings": [],
+  "timing": {
+    "syllables_per_minute": 187.2,
+    "pause_count": 0,
+    "pause_total_s": 0,
+    "longest_pause_s": 0.0,
+    "leading_trailing_silence_s": 0.42,
+    "duration_cv": 0.365
+  },
+  "check": {
+    "version": "zh-check-1",
+    "syllables": 2,
+    "errors": 0,
+    "variants": 0,
+    "agreement": 0.949,
+    "params": "zh-check-params-1"
+  },
+  "timing_ms": 260,
+  "timing_cpu_ms": 7,
+  "engine_route": {
+    "engine": "primary",
+    "box": "jkz",
+    "fallback": false
+  },
+  "model": {
+    "id": "mandarin-human-v2-85741cdf3967-fbf73d85ee88",
+    "engine_release": "rc8",
+    "experimental": true,
+    "calibration": "native_reference_per_unit",
+    "scoremap": {
+      "version": "scoremap-5",
+      "content": 1.0,
+      "agreement": 0.949,
+      "low_syllables": 0.43
+    },
+    "zh_post": {
+      "version": "zh-post-1",
+      "integrity": {
+        "integrity": null,
+        "verdicts": [],
+        "reason": "too_few_syllables"
+      },
+      "short_integrity": {
+        "integrity": 100.0,
+        "verdicts": [],
+        "features": {
+          "n": 2,
+          "active_s": 0.52,
+          "allowance_s": 1.5,
+          "outside_s": 0.0,
+          "absorbed_s": 0.0
+        }
+      },
+      "tone_score": {
+        "version": "zh-tone-score-1",
+        "anchors": "sentence",
+        "n": 2,
+        "bands": {
+          "ok": 2,
+          "uncertain": 0,
+          "review": 0
+        }
+      }
+    }
+  },
+  "id": "req_520a4415af0043fca10681f05164516e",
+  "billing": {
+    "credits": 1,
+    "balance_credits": 0,
+    "free_credits": 48,
+    "source": "free"
+  },
+  "raw": {
+    "assessable": true,
+    "warning": null,
+    "content_match": 0.75,
+    "audio": {
+      "duration_s": 1.061,
+      "speech_s": 0.641,
+      "sample_rate": 16000
+    },
+    "expected": {
+      "pinyin": [
+        "ni3",
+        "hao3"
+      ],
+      "syllable_count": 2
+    },
+    "scores": {
+      "overall": 95.6,
+      "pronunciation": 93.7,
+      "initial": 87.5,
+      "final": 99.9,
+      "tone": 95.0,
+      "fluency": 100.0,
+      "rhythm": 94.9,
+      "speed": 93.6,
+      "integrity": 100.0,
+      "content_match": 75.0
+    },
+    "timing": {
+      "syllables_per_minute": 187.2,
+      "pause_count": 0,
+      "pause_total_s": 0,
+      "longest_pause_s": 0.0,
+      "leading_trailing_silence_s": 0.42,
+      "duration_cv": 0.365
+    },
+    "syllables": [
+      {
+        "index": 0,
+        "expected": {
+          "pinyin": "ni3",
+          "initial": "n",
+          "final": "i",
+          "tone": 3
+        },
+        "span_ms": [
+          20,
+          224
+        ],
+        "duration_ms": 203,
+        "assessable": true,
+        "components": {
+          "initial": {
+            "applicable": true,
+            "expected": "n",
+            "heard": "l",
+            "agrees_with_prompt": false,
+            "score": 75.5,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": -16.214,
+            "alternatives": [
+              {
+                "label": "n",
+                "probability": 0.0
+              },
+              {
+                "label": "l",
+                "probability": 1.0
+              },
+              {
+                "label": "d",
+                "probability": 0.0
+              },
+              {
+                "label": "0",
+                "probability": 0.0
+              }
+            ],
+            "confidence": "high",
+            "advice": "Let the air pass through your nose and block it fully with the tongue. For 'l' the air escapes around the sides.",
+            "severity": "minor",
+            "flagged": true,
+            "flag_reliability": {
+              "threshold": 88.8,
+              "precision_at_threshold": 0.247,
+              "recall_at_threshold": 0.269,
+              "base_error_rate": 0.0128,
+              "measured_on": "held-out speakers"
+            }
+          },
+          "final": {
+            "applicable": true,
+            "expected": "i",
+            "heard": "i",
+            "agrees_with_prompt": true,
+            "score": 99.9,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": 13.397,
+            "alternatives": [
+              {
+                "label": "i",
+                "probability": 1.0
+              },
+              {
+                "label": "ü",
+                "probability": 0.0
+              },
+              {
+                "label": "iou",
+                "probability": 0.0
+              },
+              {
+                "label": "ei",
+                "probability": 0.0
+              }
+            ],
+            "confidence": "high",
+            "advice": null,
+            "severity": "ok",
+            "flagged": false,
+            "flag_reliability": {
+              "threshold": 89.8,
+              "precision_at_threshold": 0.194,
+              "recall_at_threshold": 0.258,
+              "base_error_rate": 0.0138,
+              "measured_on": "held-out speakers"
+            },
+            "human_risk": 0.0027769348908188818,
+            "human_acceptance_probability": 0.9972230651091811,
+            "human_risk_spread": 0.0008240552639310119,
+            "human_correction_support": 0.0,
+            "human_decision": "no_correction"
+          },
+          "tone": {
+            "applicable": true,
+            "expected": 3,
+            "heard": 3,
+            "agrees_with_prompt": true,
+            "score": 93.5,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": 1.345,
+            "alternatives": [
+              {
+                "label": 3,
+                "probability": 0.7651
+              },
+              {
+                "label": 1,
+                "probability": 0.1992
+              },
+              {
+                "label": 4,
+                "probability": 0.0042
+              },
+              {
+                "label": 5,
+                "probability": 0.0017
+              }
+            ],
+            "confidence": "medium",
+            "tone_confidence": [
+              0.1992,
+              0.0297,
+              0.7651,
+              0.0042,
+              0.0017
+            ],
+            "advice": null,
+            "severity": "ok",
+            "flagged": false,
+            "flag_reliability": {
+              "threshold": 79.5,
+              "precision_at_threshold": 0.397,
+              "recall_at_threshold": 0.558,
+              "base_error_rate": 0.1,
+              "measured_on": "held-out speakers"
+            },
+            "human_risk": 0.12168164356275087,
+            "human_acceptance_probability": 0.8783183564372491,
+            "human_risk_spread": 0.05959819310835543,
+            "human_correction_support": 0.0,
+            "human_decision": "no_correction",
+            "human_expected_tone": 3,
+            "human_surface_tone": 2
+          }
+        },
+        "score": 89.6,
+        "severity": "ok",
+        "advice": [
+          "Let the air pass through your nose and block it fully with the tongue. For 'l' the air escapes around the sides."
+        ]
+      },
+      {
+        "index": 1,
+        "expected": {
+          "pinyin": "hao3",
+          "initial": "h",
+          "final": "ao",
+          "tone": 3
+        },
+        "span_ms": [
+          224,
+          661
+        ],
+        "duration_ms": 437,
+        "assessable": true,
+        "components": {
+          "initial": {
+            "applicable": true,
+            "expected": "h",
+            "heard": "h",
+            "agrees_with_prompt": true,
+            "score": 99.6,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": 5.613,
+            "alternatives": [
+              {
+                "label": "h",
+                "probability": 0.9898
+              },
+              {
+                "label": "0",
+                "probability": 0.0036
+              },
+              {
+                "label": "p",
+                "probability": 0.0026
+              },
+              {
+                "label": "m",
+                "probability": 0.002
+              }
+            ],
+            "confidence": "high",
+            "advice": null,
+            "severity": "ok",
+            "flagged": false,
+            "flag_reliability": {
+              "threshold": 88.8,
+              "precision_at_threshold": 0.247,
+              "recall_at_threshold": 0.269,
+              "base_error_rate": 0.0128,
+              "measured_on": "held-out speakers"
+            }
+          },
+          "final": {
+            "applicable": true,
+            "expected": "ao",
+            "heard": "ao",
+            "agrees_with_prompt": true,
+            "score": 99.9,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": 11.044,
+            "alternatives": [
+              {
+                "label": "ao",
+                "probability": 1.0
+              },
+              {
+                "label": "iao",
+                "probability": 0.0
+              },
+              {
+                "label": "ou",
+                "probability": 0.0
+              },
+              {
+                "label": "er",
+                "probability": 0.0
+              }
+            ],
+            "confidence": "high",
+            "advice": null,
+            "severity": "ok",
+            "flagged": false,
+            "flag_reliability": {
+              "threshold": 89.8,
+              "precision_at_threshold": 0.194,
+              "recall_at_threshold": 0.258,
+              "base_error_rate": 0.0138,
+              "measured_on": "held-out speakers"
+            },
+            "human_risk": 0.003647505580548846,
+            "human_acceptance_probability": 0.9963524944194512,
+            "human_risk_spread": 0.00074141763518307,
+            "human_correction_support": 0.0,
+            "human_decision": "no_correction"
+          },
+          "tone": {
+            "applicable": true,
+            "expected": 3,
+            "heard": 3,
+            "agrees_with_prompt": true,
+            "score": 96.5,
+            "score_means": "probability an expert would accept this, as a percentage",
+            "margin": 3.629,
+            "alternatives": [
+              {
+                "label": 3,
+                "probability": 0.9588
+              },
+              {
+                "label": 1,
+                "probability": 0.0255
+              },
+              {
+                "label": 2,
+                "probability": 0.0139
+              },
+              {
+                "label": 4,
+                "probability": 0.0012
+              }
+            ],
+            "confidence": "high",
+            "tone_confidence": [
+              0.0255,
+              0.0139,
+              0.9588,
+              0.0012,
+              0.0006
+            ],
+            "advice": null,
+            "severity": "ok",
+            "flagged": false,
+            "flag_reliability": {
+              "threshold": 79.5,
+              "precision_at_threshold": 0.397,
+              "recall_at_threshold": 0.558,
+              "base_error_rate": 0.1,
+              "measured_on": "held-out speakers"
+            },
+            "human_risk": 0.03825174904424948,
+            "human_acceptance_probability": 0.9617482509557506,
+            "human_risk_spread": 0.007354908102389806,
+            "human_correction_support": 0.0,
+            "human_decision": "no_correction",
+            "human_expected_tone": 3,
+            "human_surface_tone": 3
+          }
+        },
+        "score": 98.7,
+        "severity": "ok",
+        "advice": []
+      }
+    ],
+    "diagnosis": {
+      "problem_count": 1,
+      "priority": [
+        {
+          "syllable_index": 0,
+          "pinyin": "ni3",
+          "component": "initial",
+          "expected": "n",
+          "heard": "l",
+          "score": 75.5,
+          "severity": "minor",
+          "advice": "Let the air pass through your nose and block it fully with the tongue. For 'l' the air escapes around the sides."
+        }
+      ],
+      "recurring_patterns": [],
+      "summary": "1 syllable(s) need work, starting with the initial of 'ni3'."
+    },
+    "meta": {
+      "engine": "toneperfect-oob",
+      "scores_are": "calibrated probability an expert accepts, x100",
+      "tone_model": "legacy-oob",
+      "calibration": "pending -- run finalize_v2",
+      "human_judgment": {
+        "model": "legacy-human-judgment-v2",
+        "sha256": "fbf73d85ee8841cc45c6c98b5ef97e1c99329eb805fcb6b2bfb905ad38e73da5",
+        "status": "experimental",
+        "task": "general",
+        "validated_population": "historical OMPAL connected Mandarin; French learners",
+        "flag_policy": "baseline_flags_preserved",
+        "score_semantics": "Human acceptance probability is separate from the native-reference display grade."
+      }
+    },
+    "display_map": {
+      "version": "rc6c-1",
+      "before": {
+        "overall": 84.2,
+        "pronunciation": 82.4
+      }
+    },
+    "zh_fix": {
+      "version": "zh-fix-1",
+      "flags": [
+        "decision",
+        "floors",
+        "lowcorr",
+        "short",
+        "tone",
+        "units"
+      ],
+      "before": {
+        "scores": {
+          "overall": 90.0,
+          "pronunciation": 87.5,
+          "initial": 73.0,
+          "final": 95.8,
+          "tone": 87.5
+        },
+        "words": [
+          98.2,
+          98.0
+        ]
+      }
+    }
+  },
+  "scores_v1": {
+    "overall": 90.0,
+    "pronunciation": 87.5,
+    "integrity": null,
+    "tone": 84.5,
+    "initial": 49.9,
+    "final": 99.6
+  },
+  "response_version": 2
+}
