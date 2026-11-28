@@ -27,6 +27,14 @@ type FormUi = {
   status: HTMLParagraphElement;
 };
 
+type RecorderUi = {
+  section: HTMLElement;
+  reference: HTMLInputElement;
+  record: HTMLButtonElement;
+  stop: HTMLButtonElement;
+  details: HTMLUListElement;
+};
+
 export type PublicSettings = {
   configured: boolean;
   region: string;
@@ -123,7 +131,7 @@ function buildForm(document: Document): FormUi {
   return { form, fields, save, status };
 }
 
-function buildRecorder(document: Document) {
+function buildRecorder(document: Document): RecorderUi {
   const section = document.createElement("section");
   section.className = "lh-language-coach-settings__recorder";
   const title = document.createElement("h3");
@@ -210,6 +218,37 @@ function createSubmitHandler(deps: SaveDeps): (event: Event) => Promise<void> {
   };
 }
 
+function createResultView(
+  document: Document,
+  details: HTMLUListElement,
+  setStatus: (message: string, error?: boolean) => void,
+): { show: (result: Record<string, unknown>) => void; clear: () => void } {
+  const clear = () => { details.textContent = ""; };
+  const show = (result: Record<string, unknown>) => {
+    setStatus(assessmentSummary(result));
+    clear();
+    for (const line of assessmentLines(result)) {
+      const item = document.createElement("li");
+      item.textContent = line;
+      details.append(item);
+    }
+  };
+  return { show, clear };
+}
+
+function subscribeSettings(
+  ctx: SettingsContext,
+  onPayload: (settings: PublicSettings, profile: CoachProfile) => void,
+): () => void {
+  return ctx.onNotification(event => {
+    if (event.topic !== "settings-changed") return;
+    try {
+      const payload = record(event.data) ? event.data : {};
+      onPayload(readPublicSettings(payload), readCoachProfile(payload));
+    } catch {}
+  });
+}
+
 export function mountLanguageCoachSettings(container: HTMLElement, ctx: SettingsContext, signal: AbortSignal): () => void {
   if (signal.aborted) return () => {};
   const document = container.ownerDocument;
@@ -231,19 +270,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     status.classList.toggle("lh-language-coach-settings__status-error", error);
   };
   const onSubmit = createSubmitHandler({ ctx, fields, save, isLive, markNewer, setStatus });
-
-  const clearResult = () => { recorderUi.details.textContent = ""; };
-
-  /** Show the mapped scores and the per-sound or per-syllable detail. */
-  const showResult = (result: Record<string, unknown>) => {
-    setStatus(assessmentSummary(result));
-    clearResult();
-    for (const line of assessmentLines(result)) {
-      const item = document.createElement("li");
-      item.textContent = line;
-      recorderUi.details.append(item);
-    }
-  };
+  const results = createResultView(document, recorderUi.details, setStatus);
 
   const flow = createRecordingFlow({
     call: (operation, input) => ctx.call(operation, input),
@@ -251,22 +278,17 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     setStatus,
     buttons: { record: recorderUi.record, stop: recorderUi.stop },
     readInputs: () => ({ referenceText: recorderUi.reference.value.trim(), locale: fields.target.input.value }),
-    showResult,
-    clearResult,
+    showResult: results.show,
+    clearResult: results.clear,
   });
 
   form.addEventListener("submit", onSubmit);
   recorderUi.record.addEventListener("click", () => { void flow.start(); });
   recorderUi.stop.addEventListener("click", () => { void flow.stop(); });
-  const unsubscribe = ctx.onNotification(event => {
-    if (event.topic !== "settings-changed" || disposed) return;
-    try {
-      const payload = record(event.data) ? event.data : {};
-      const settings = readPublicSettings(payload);
-      const profile = readCoachProfile(payload);
-      markNewer();
-      applyPublicSettings(fields, settings, profile);
-    } catch {}
+  const unsubscribe = subscribeSettings(ctx, (settings, profile) => {
+    if (disposed) return;
+    markNewer();
+    applyPublicSettings(fields, settings, profile);
   });
 
   const dispose = () => {
