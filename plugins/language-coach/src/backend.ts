@@ -6,9 +6,11 @@ import {
   normalizeFirstLanguage,
   normalizeRegion,
   normalizeTargetLanguage,
+  coachProfile,
   publicSettings,
   readSpeechKey,
   saveSettings,
+  type CoachProfile,
   type PublicSettings,
   type StoredSettings,
 } from "./settings-store.ts";
@@ -60,6 +62,11 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     return publicSettings(settings);
   });
 
+  const getProfile = ctx.handle("get-coach-profile", () => {
+    assertActive();
+    return coachProfile(settings);
+  });
+
   const save = ctx.handle("save-settings", input => {
     assertActive();
     if (!record(input)) throw new Error("Expected language coach settings.");
@@ -71,8 +78,8 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     saveSettings(ctx.dataDirectory, next);
     Object.assign(settings, next);
     const published: PublicSettings = publicSettings(settings);
-    ctx.events.emit("settings-changed", published);
-    return published;
+    ctx.events.emit("settings-changed", { ...published, ...coachProfile(settings) });
+    return { ...published, ...coachProfile(settings) };
   });
 
   const assessClip = ctx.handle("assess-pronunciation", async (input): Promise<AssessmentResult> => {
@@ -87,6 +94,7 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     if (disposed) return;
     disposed = true;
     get();
+    getProfile();
     save();
     assessClip();
   };

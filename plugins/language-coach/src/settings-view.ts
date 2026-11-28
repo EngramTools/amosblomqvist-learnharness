@@ -7,6 +7,9 @@ type SettingsContext = Pick<PluginFrontendContext, "call" | "onNotification">;
 export type PublicSettings = {
   configured: boolean;
   region: string;
+};
+
+export type CoachProfile = {
   targetLanguage: CoachLocale;
   firstLanguage: string;
 };
@@ -18,16 +21,17 @@ export const TARGET_LANGUAGE_LABEL = "Target language";
 export const FIRST_LANGUAGE_LABEL = "Learner first language";
 
 export function readPublicSettings(value: unknown): PublicSettings {
-  if (!record(value) || typeof value.configured !== "boolean" || typeof value.region !== "string"
-    || (value.targetLanguage !== "en-US" && value.targetLanguage !== "zh-CN") || typeof value.firstLanguage !== "string") {
+  if (!record(value) || typeof value.configured !== "boolean" || typeof value.region !== "string") {
     throw new Error("Language coach settings are unavailable.");
   }
-  return {
-    configured: value.configured,
-    region: value.region,
-    targetLanguage: value.targetLanguage,
-    firstLanguage: value.firstLanguage,
-  };
+  return { configured: value.configured, region: value.region };
+}
+
+export function readCoachProfile(value: unknown): CoachProfile {
+  if (!record(value) || (value.targetLanguage !== "en-US" && value.targetLanguage !== "zh-CN") || typeof value.firstLanguage !== "string") {
+    throw new Error("Language coach profile is unavailable.");
+  }
+  return { targetLanguage: value.targetLanguage, firstLanguage: value.firstLanguage };
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -101,11 +105,11 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   let recorder: Awaited<ReturnType<typeof startRecorder>> | undefined;
 
   const isLive = () => !disposed && !signal.aborted;
-  const apply = (settings: PublicSettings) => {
+  const apply = (settings: PublicSettings, profile: CoachProfile) => {
     keyField.input.placeholder = settings.configured ? "Saved key — enter a new key to replace it" : "Paste an Azure Speech key";
     regionField.input.value = settings.region;
-    targetField.input.value = settings.targetLanguage;
-    firstField.input.value = settings.firstLanguage;
+    targetField.input.value = profile.targetLanguage;
+    firstField.input.value = profile.firstLanguage;
   };
 
   const setStatus = (message: string, error = false) => {
@@ -127,10 +131,12 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
         firstLanguage: firstField.input.value,
       };
       if (submittedKey) payload.key = submittedKey;
-      const settings = readPublicSettings(await ctx.call("save-settings", payload));
+      const saved = await ctx.call("save-settings", payload);
+      const settings = readPublicSettings(saved);
+      const profile = readCoachProfile(saved);
       if (!isLive()) return;
       if (submittedKey) keyField.input.value = "";
-      apply(settings);
+      apply(settings, profile);
       setStatus(submittedKey ? "Saved. Clips are sent to Azure for pronunciation assessment." : "Saved.");
     } catch (error) {
       if (!isLive()) return;
@@ -192,7 +198,10 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   stopButton.addEventListener("click", () => { void stopRecording(); });
   const unsubscribe = ctx.onNotification(event => {
     if (event.topic !== "settings-changed" || disposed) return;
-    try { apply(readPublicSettings(event.data)); } catch {}
+    try {
+      const payload = record(event.data) ? event.data : {};
+      apply(readPublicSettings(payload), readCoachProfile(payload));
+    } catch {}
   });
 
   const dispose = () => {
@@ -209,8 +218,11 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
 
   void (async () => {
     try {
-      const settings = readPublicSettings(await ctx.call("get-settings"));
-      if (isLive()) apply(settings);
+      const [settings, profile] = await Promise.all([
+        readPublicSettings(await ctx.call("get-settings")),
+        readCoachProfile(await ctx.call("get-coach-profile")),
+      ]);
+      if (isLive()) apply(settings, profile);
     } catch {
       if (isLive()) setStatus("The saved settings could not be read.", true);
     }

@@ -17,6 +17,9 @@ export type StoredSettings = {
 export type PublicSettings = {
   configured: boolean;
   region: string;
+};
+
+export type CoachProfile = {
   targetLanguage: CoachLocale;
   firstLanguage: string;
 };
@@ -100,6 +103,11 @@ export function publicSettings(settings: StoredSettings): PublicSettings {
   return {
     configured: Boolean(settings.azureSpeechKey),
     region: settings.azureRegion ?? "",
+  };
+}
+
+export function coachProfile(settings: StoredSettings): CoachProfile {
+  return {
     targetLanguage: settings.targetLanguage ?? DEFAULT_TARGET,
     firstLanguage: settings.firstLanguage ?? "en",
   };

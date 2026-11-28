@@ -17,9 +17,8 @@ function fixture(options: { failSave?: boolean; rejectWithKey?: string } = {}) {
   const cleanup = activate({
     call: async (operation: string, input?: unknown) => {
       calls.push({ operation, input });
-      if (operation === "get-settings") {
-        return { configured: false, region: "", targetLanguage: "en-US", firstLanguage: "en" };
-      }
+      if (operation === "get-settings") return { configured: false, region: "" };
+      if (operation === "get-coach-profile") return { targetLanguage: "en-US", firstLanguage: "en" };
       if (options.failSave) {
         throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The settings could not be saved.");
       }
@@ -63,6 +62,7 @@ test("the settings row masks the key and exposes only configured and region", as
   assert.match(container.textContent!, new RegExp(SPEECH_KEY_LABEL));
   assert.match(container.textContent!, new RegExp(SPEECH_KEY_DESCRIPTION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.deepEqual(f.calls[0], { operation: "get-settings", input: undefined });
+  assert.deepEqual(f.calls[1], { operation: "get-coach-profile", input: undefined });
 
   input.value = "speech-secret";
   (container.querySelector("#lh-language-coach-region") as HTMLInputElement).value = "westus";
@@ -71,8 +71,8 @@ test("the settings row masks the key and exposes only configured and region", as
   container.querySelector("form")!.dispatchEvent(submit);
   await flush();
 
-  assert.deepEqual(f.calls[1]?.operation, "save-settings");
-  assert.equal((f.calls[1]?.input as { key?: string }).key, "speech-secret");
+  assert.deepEqual(f.calls[2]?.operation, "save-settings");
+  assert.equal((f.calls[2]?.input as { key?: string }).key, "speech-secret");
   assert.equal(container.textContent!.includes("speech-secret"), false);
 
   f.notify!({ topic: "settings-changed", data: { configured: true, region: "westus", targetLanguage: "zh-CN", firstLanguage: "en" } });

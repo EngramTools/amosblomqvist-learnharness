@@ -47,13 +47,14 @@ test("settings storage never returns the Azure key to callers", async () => {
     targetLanguage: "en-US",
     firstLanguage: "zh",
   });
-  assert.deepEqual(saved, { configured: true, region: "westus", targetLanguage: "en-US", firstLanguage: "zh" });
+  assert.deepEqual(saved, { configured: true, region: "westus", targetLanguage: "en-US", firstLanguage: "zh" } satisfies Record<string, unknown>);
   const disk = JSON.parse(fs.readFileSync(path.join(directory, "settings.json"), "utf8")) as { azureSpeechKey?: string };
   assert.equal(disk.azureSpeechKey, secret);
 
   const read = await call("get-settings");
-  assert.deepEqual(read, saved);
+  assert.deepEqual(read, { configured: true, region: "westus" });
   assert.equal(JSON.stringify(read).includes(secret), false);
+  assert.deepEqual(await call("get-coach-profile"), { targetLanguage: "en-US", firstLanguage: "zh" });
   cleanup();
 });
 
