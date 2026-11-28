@@ -79,7 +79,15 @@ function mountCriterionScores(document: Document, container: HTMLElement, scorin
     "lh-explain-back__fix-choice",
     `${GAP_LABELS[scoring.fix.criterion]} · ${formatProbability(scoring.fix.probability)}`,
   ));
-  fix.append(paragraph(document, "lh-explain-back__prose", scoring.fix.wording));
+  const wording = scoring.fix.wording;
+  if (wording !== undefined) fix.append(paragraph(document, "lh-explain-back__prose", wording));
+  else {
+    fix.append(paragraph(
+      document,
+      "lh-explain-back__prose lh-explain-back__fix-wording-unavailable",
+      `Fix wording is unavailable: ${scoring.fix.unavailableReason ?? "the wording model call failed"}.`,
+    ));
+  }
   container.append(fix);
 }
 

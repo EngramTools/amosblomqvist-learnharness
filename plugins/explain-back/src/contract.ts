@@ -21,7 +21,14 @@ export type ExplainBackGap = { kind: GapKind; detail: string };
 /** The four literal-reader gaps always score; the delivery criterion scores
  *  only on dictated interview-mode answers, so it stays optional here. */
 export type ExplainBackCriterionScores = Record<GapKind, number> & { [DELIVERY_CRITERION]?: number };
-export type ExplainBackFix = { criterion: GapKind | typeof DELIVERY_CRITERION; probability: number; wording: string };
+/** `wording` is absent when the wording call failed; the scores still stand. */
+export type ExplainBackFix = {
+  criterion: GapKind | typeof DELIVERY_CRITERION;
+  probability: number;
+  wording?: string;
+  /** Why the wording is absent; always paired with a missing `wording`. */
+  unavailableReason?: string;
+};
 export type ExplainBackScoring =
   | { status: "ok"; criteria: ExplainBackCriterionScores; fix: ExplainBackFix }
   | { status: "unavailable"; reason: string };
@@ -213,10 +220,14 @@ function readScoring(value: unknown): ExplainBackScoring | null {
   if (value.status !== "ok") return null;
   const criteria = readCriterionScores(value.criteria);
   if (!criteria || !record(value.fix)) return null;
-  const { criterion, probability, wording } = value.fix;
+  const { criterion, probability, wording, unavailableReason } = value.fix;
   if (!isFixCriterion(criterion) || !isProbability(probability)) return null;
-  if (typeof wording !== "string" || !isReady(wording)) return null;
-  return { status: "ok", criteria, fix: { criterion, probability, wording } };
+  const wordingValid = wording === undefined || (typeof wording === "string" && isReady(wording));
+  if (!wordingValid) return null;
+  const fix: ExplainBackFix = { criterion, probability };
+  if (wording !== undefined) fix.wording = wording;
+  else if (typeof unavailableReason === "string" && isReady(unavailableReason)) fix.unavailableReason = unavailableReason;
+  return { status: "ok", criteria, fix };
 }
 
 /** The fix may name a literal-reader gap or the delivery criterion. */
