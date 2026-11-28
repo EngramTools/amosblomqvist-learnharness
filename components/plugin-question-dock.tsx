@@ -137,7 +137,12 @@ export function PluginQuestionDockContent({ viewReader, snapshot, chatId, draft,
 		// Host thinking is a draft channel, not plugin execution authority:
 		// an already-captured final must survive reconciliation or compaction.
 		if (snapshot.showThinking) { draft.thinking = joinDictation(draft.thinking, text); render(); }
-		else if (!failed && speechLease === lease.current && now.registration && leaseRegistration.current === now.registration && now.available) await (speech ? speechLease?.appendSpeech(speech) : speechLease?.append(text));
+		else if (!failed && speechLease === lease.current && now.registration && leaseRegistration.current === now.registration && now.available) {
+			// The run latched its opt-in at start; a mid-run flag removal must
+			// still deliver the final (speech callback, else plain text).
+			if (speech) await speechLease?.appendLatchedSpeech(speech);
+			else await speechLease?.append(text);
+		}
 	}, [key, snapshot.showThinking, speechLease, reveal, failed, draft]);
 	const append = useCallback((text: string) => deliver(text), [deliver]);
 	const appendSpeech = useCallback((speech: DictatedSpeech) => deliver(speech.text, speech), [deliver]);

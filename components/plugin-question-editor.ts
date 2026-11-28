@@ -42,6 +42,20 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		try { old?.dispose(); } catch { /* unavailable host fallback already owns the surface */ }
 		options.changed();
 	}
+	async function appendText(text: string) {
+		if (!current || !handle?.appendTranscript) return;
+		const adopted = handle;
+		try { await adopted.appendTranscript!(text); } catch { fail(); }
+	}
+	async function appendSpeechValue(speech: DictatedSpeech) {
+		if (!current || !handle) return;
+		const adopted = handle;
+		if (typeof adopted.appendDictatedSpeech === "function") {
+			try { await adopted.appendDictatedSpeech(speech); } catch { fail(); }
+			return;
+		}
+		await appendText(speech.text);
+	}
 	return {
 		props,
 		adopt(next: H) {
@@ -57,8 +71,11 @@ function createEditorLease<P, H extends EditorHandle>(options: {
 		update(state: PluginQuestionAnswerState, active: boolean) { if (current && handle) try { options.update(handle, state, active); } catch { fail(); } },
 		focus() { if (current && handle) try { handle.focus(); } catch { fail(); } },
 		key(key: PluginQuestionEditorKey): "handled" | "pass" { if (current && handle?.handleKeyDown) try { return handle.handleKeyDown(key) === "handled" ? "handled" : "pass"; } catch { fail(); } return "pass"; },
-		async append(text: string) { if (current && handle?.appendTranscript) { const adopted = handle; try { await adopted.appendTranscript!(text); } catch { fail(); } } },
-		async appendSpeech(speech: DictatedSpeech) { if (current && wantsSpeech(handle)) { const adopted = handle!; try { await adopted.appendDictatedSpeech!(speech); } catch { fail(); } } },
+		append: appendText,
+		appendSpeech(speech: DictatedSpeech) { if (current && wantsSpeech(handle)) return appendSpeechValue(speech); },
+		/** Deliver a final whose opt-in was latched when the run started: a
+		 *  mid-run flag removal falls back to plain text instead of dropping it. */
+		appendLatchedSpeech: appendSpeechValue,
 		fail, dispose,
 	};
 }

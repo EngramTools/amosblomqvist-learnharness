@@ -53,9 +53,18 @@ let cleanup: (() => Promise<void>) | undefined;
 let restore: (() => void) | undefined;
 afterEach(async () => { await cleanup?.(); restore?.(); cleanup = undefined; restore = undefined; Socket.all = []; openedUrls.length = 0; });
 
+/** One recorded word plus the Deepgram-only fields the public shape drops. */
+type RecordedWord = DictatedSpeech["words"][number] & { punctuated_word?: string };
+
 /** Recorded Deepgram `Results` finals (shape per developers.deepgram.com
  *  streaming reference): one silence/empty final, two word-bearing finals. */
-const RECORDED_RESULTS: unknown[] = [
+interface RecordedResult {
+	type: string;
+	is_final: boolean;
+	channel: { alternatives: Array<{ transcript: string; words?: RecordedWord[] }> };
+}
+
+const RECORDED_RESULTS: RecordedResult[] = [
 	{ type: "Results", is_final: true, channel: { alternatives: [{ transcript: "", words: [] }] } },
 	{
 		type: "Results", is_final: true,
@@ -87,6 +96,10 @@ interface SpeechFixture {
 	dictation: Dictation;
 	/** The fixture's shared draft — the thinking channel the dock writes. */
 	draft: PluginQuestionDraft;
+	/** The editor handle's live opt-in flag; flip it between renders. */
+	flags: { wantsWords: boolean };
+	/** Force the dock to render again (what a plugin's own state change does). */
+	render(): Promise<void>;
 	/** The socket of the latest dictation run. */
 	socket(): RecordingSocket;
 }
@@ -112,19 +125,23 @@ async function fixture(options: { thinking?: boolean; wantsWords?: boolean; omit
 	resetDictationLanguageForTests();
 	const draft: PluginQuestionDraft = { answer: { status: "empty" }, thinking: "", readingThinking: "" };
 	const state = { snapshot: { ...saved, showThinking: options.thinking ?? false }, expanded: true, reveal: false, ready: true, reconciliation: "ready" as const, available: true, speech: [] as DictationDelivery[], fallback: [] as string[] };
+	const flags = { wantsWords: !!(options.wantsWords && !options.omitFlag) };
 	let registration: QuestionRendererRegistration | undefined = { pluginId: "fixture", renderer: { id: "code", supportedContractVersions: [1], mountAnswerEditor(container, props) {
 		const textarea = container.ownerDocument.createElement("textarea"); container.append(textarea);
 		props.onChange({ status: "ready", value: "  code\n" });
 		const handle: PluginQuestionEditorHandle = { update() {}, focus() { textarea.focus(); }, dispose() {},
 			appendTranscript(text: string) { assert.equal(typeof text, "string", "appendTranscript is text-only"); state.speech.push(text); },
-			...(options.wantsWords && !options.omitFlag ? { wantsDictatedWords: true } : {}),
+			get wantsDictatedWords() { return flags.wantsWords; },
 			...(options.wantsWords && !options.omitSpeechCallback ? { appendDictatedSpeech(speech: DictatedSpeech) { state.speech.push(speech); } } : {}) };
 		return handle;
 	} } };
 	let dictation!: Dictation;
+	let rerender!: () => void;
 	function Harness() {
 		const reading = useRef<HTMLDivElement>(null);
 		const [mic, setMic] = useState(false);
+		const [, forceRender] = useState(0);
+		rerender = () => forceRender(count => count + 1);
 		dictation = useDictation({ append: text => { state.fallback.push(text); }, disabled: !mic });
 		return <PluginQuestionDockContent snapshot={state.snapshot} chatId="chat" draft={draft} expanded={state.expanded} reveal={state.reveal} ready={state.ready} reconciliation={state.reconciliation} available={state.available} registration={registration} readingRef={reading} onMicAvailable={setMic}
 			onExpand={() => {}} send={async input => { state.speech.push(input as unknown as string); return true; }} dismiss={async () => {}} />;
@@ -133,7 +150,8 @@ async function fixture(options: { thinking?: boolean; wantsWords?: boolean; omit
 	await act(async () => { root.render(<Harness />); });
 	cleanup = async () => { await act(async () => { root.unmount(); }); };
 	const f: SpeechFixture = {
-		state, dictation, draft,
+		state, dictation, draft, flags,
+		render: async () => { await act(async () => { rerender(); }); },
 		socket: () => Socket.all.at(-1) as RecordingSocket,
 	};
 	return f;
@@ -147,10 +165,9 @@ async function dictate(f: SpeechFixture) {
 	await act(async () => { socket.end(); });
 }
 
-const recordedWords: DictatedSpeech["words"] = [
-	...(RECORDED_RESULTS[1] as { channel: { alternatives: { words: DictatedSpeech["words"] }[] } }).channel.alternatives[0]!.words,
-	...(RECORDED_RESULTS[2] as { channel: { alternatives: { words: DictatedSpeech["words"] }[] } }).channel.alternatives[0]!.words,
-];
+const recordedWords: DictatedSpeech["words"] = RECORDED_RESULTS.slice(1).flatMap(result =>
+	(result.channel.alternatives[0]!.words ?? []).map(({ word, start, end, confidence }) => ({ word, start, end, confidence })),
+);
 
 /** The last dictation run opened exactly this URL (byte-pinned). */
 function assertUrl(expected: string, message?: string) {
@@ -179,7 +196,31 @@ test("opted-in editor gets {text, words} with every final's words in order", asy
 	assert.equal(speech.text, "uh let me think the premise fails");
 	assert.equal(speech.words.length, recordedWords.length, "count matches the words Deepgram returned");
 	assert.deepEqual(speech.words, recordedWords);
+	for (const word of speech.words) assert.deepEqual(Object.keys(word).sort(), ["confidence", "end", "start", "word"], "only the declared fields escape");
 	assert.deepEqual(f.state.fallback, []);
+});
+
+test("opted-in editor with a multilingual run gets timings without filler_words", async () => {
+	const f = await fixture({ wantsWords: true, language: "multi" });
+	await dictate(f);
+	const speech = speechEnvelope(f);
+	assert.equal(speech.language, "multi");
+	assert.equal(speech.words.length, recordedWords.length, "word timings arrive in every language");
+	assert.equal(speech.text, "uh let me think the premise fails");
+	assert.equal(new URL(openedUrls[0]!).searchParams.has("filler_words"), false, "multilingual mode is not English");
+});
+
+test("a mid-run wantsDictatedWords flip latches the opt-in and never drops the final", async () => {
+	const f = await fixture({ wantsWords: true });
+	await act(async () => { f.dictation.toggle(); });
+	const socket = f.socket();
+	await act(async () => { socket.open(); socket.results(RECORDED_RESULTS[1]); });
+	f.flags.wantsWords = false;
+	await f.render();
+	await act(async () => { socket.results(RECORDED_RESULTS[2]); socket.end(); });
+	assert.equal(f.dictation.phase, "idle", "the flip must not cancel the live run");
+	assert.deepEqual(f.state.speech, [{ text: "uh let me think the premise fails", words: recordedWords, language: "en" }], "the latched opt-in still delivers the final transcript");
+	assert.deepEqual(f.state.fallback, [], "the question target still owns the text");
 });
 
 test("opted-in editor with a non-English language gets timings without filler_words", async () => {

@@ -269,10 +269,10 @@ export function joinDictation(current: string, final: string): string {
  * can't clear another claimant.
  */
 export function usePluginQuestionDictationTarget(append: (text: string) => void | Promise<void>, claimed: boolean, appendSpeech?: (speech: DictatedSpeech) => void | Promise<void>) {
+	// The text target owns the claim and its cancel-on-replacement cleanup.
 	useEffect(() => {
 		if (!claimed) return;
 		questionTarget = append;
-		questionTargetSpeech = appendSpeech ?? null;
 		return () => {
 			if (questionTarget === append) {
 				// Cancel/discard an obsolete capture before releasing its destination.
@@ -281,6 +281,12 @@ export function usePluginQuestionDictationTarget(append: (text: string) => void 
 				questionTargetSpeech = null;
 			}
 		};
+	}, [append, claimed]);
+	// Speech opt-in changes must not cancel a live run: the engine latches its
+	// receiver at start, and the dock falls back to plain text if the editor
+	// revokes the flag before the final lands.
+	useEffect(() => {
+		if (claimed && questionTarget === append) questionTargetSpeech = appendSpeech ?? null;
 	}, [append, claimed, appendSpeech]);
 }
 
@@ -295,9 +301,14 @@ export function useDictationTarget(append: (text: string) => void, claimed: bool
 	}, [append, claimed]);
 }
 
-/** A final's Deepgram words when the run opted in to word timings; nothing otherwise. */
-function finalWords(optedIn: unknown, alternative: { words?: DictatedWord[] } | undefined): DictatedWord[] {
-	return optedIn ? alternative?.words ?? [] : [];
+/** One Deepgram word: the declared fields plus any `punctuated_word`/extras. */
+type DeepgramWord = DictatedWord & { readonly punctuated_word?: string };
+
+/** A final's words mapped to the public shape when the run opted in to word
+ *  timings; nothing otherwise. Extra Deepgram fields never escape. */
+function finalWords(optedIn: unknown, alternative: { words?: readonly DeepgramWord[] } | undefined): DictatedWord[] {
+	if (!optedIn) return [];
+	return (alternative?.words ?? []).map(({ word, start, end, confidence }) => ({ word, start, end, confidence }));
 }
 
 export type DictationPhase = "idle" | "connecting" | "recording" | "stopping";
@@ -306,7 +317,7 @@ export interface DictationDestination {
 	id: string;
 	append: (text: string) => void | Promise<void>;
 	/** Opt-in: when present the run delivers `{text, words}` here instead of
-	 *  text to `append`, and requests filler words for English. */
+	 *  text to `append`, and requests filler words for monolingual English. */
 	appendSpeech?: (speech: DictatedSpeech) => void | Promise<void>;
 }
 
@@ -566,6 +577,26 @@ export function useDictation({ append, destination = "primary", disabled = false
 		[cleanup, setPhase],
 	);
 
+	/** Route one capture-worklet message for `gen`: levels always update; audio
+	 *  sends when the socket is open and queues (capped) while it is not. */
+	const handleCaptureMessage = useCallback((gen: number, data: unknown) => {
+		if (gen !== genRef.current) return;
+		const msg = data as { type: string; rms?: number; buffer?: ArrayBuffer };
+		if (msg.type === "level") {
+			levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
+			return;
+		}
+		if (msg.type !== "audio" || !msg.buffer) return;
+		const ws = wsRef.current;
+		if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer);
+		// Mitigation A: not OPEN yet (handshake or reconnect gap) —
+		// queue, capped; the open handler flushes in order.
+		else {
+			pendingRef.current.push(msg.buffer);
+			if (pendingRef.current.length > 256) pendingRef.current.shift();
+		}
+	}, []);
+
 	const start = useCallback(async (destination?: DictationDestination) => {
 		if (disabledRef.current || phaseRef.current !== "idle") return;
 		if (recordingOwner !== null && recordingOwner !== owner) {
@@ -576,8 +607,8 @@ export function useDictation({ append, destination = "primary", disabled = false
 		destinationRef.current = target;
 		// Opt-in is read once per run: an explicit destination carries its own
 		// receiver; the default question target carries the plugin editor's.
-		// The core owns the language gate: filler_words is requested for English
-		// only, and word timings are kept for any language.
+		// The core owns the language gate: filler_words is requested for
+		// monolingual English only, and word timings are kept for any language.
 		speechRef.current = destination ? destination.appendSpeech : primary ? questionTargetSpeech ?? undefined : undefined;
 		setDestinationId(target.id);
 		recordingOwner = owner;
@@ -633,22 +664,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 
 			const worklet = new AudioWorkletNode(ctx, "pcm-capture");
 			workletRef.current = worklet;
-			worklet.port.onmessage = (e) => {
-				if (gen !== genRef.current) return;
-				const msg = e.data as { type: string; rms?: number; buffer?: ArrayBuffer };
-				if (msg.type === "level") {
-					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
-				} else if (msg.type === "audio") {
-					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer!);
-					// Mitigation A: not OPEN yet (handshake or reconnect gap) —
-					// queue, capped; the open handler flushes in order.
-					else {
-						pendingRef.current.push(msg.buffer!);
-						if (pendingRef.current.length > 256) pendingRef.current.shift();
-					}
-				}
-			};
+			worklet.port.onmessage = (e) => handleCaptureMessage(gen, e.data);
 			const source = ctx.createMediaStreamSource(stream);
 			sourceRef.current = source;
 			source.connect(worklet);
@@ -681,7 +697,7 @@ export function useDictation({ append, destination = "primary", disabled = false
 		// Mitigation B: the handshake fires the moment the graph is live,
 		// overlapping any remaining token wait — mic-gated, never before it.
 		openSocket(gen, token, language);
-	}, [openSocket, cleanup, getLanguage, owner, primary, setPhase]);
+	}, [openSocket, cleanup, getLanguage, handleCaptureMessage, owner, primary, setPhase]);
 
 	const stop = useCallback(() => {
 		const gen = genRef.current;
@@ -790,6 +806,36 @@ export function useDictation({ append, destination = "primary", disabled = false
 	};
 }
 
+/** The idle Dictate button: a wide, quiet full-width affordance; an error
+ *  swaps the label, and the caller decides whether a press retries or opens
+ *  Settings → Keys. */
+function DictationIdleButton({ error, disabled, onPress }: {
+	error: string | null;
+	disabled: boolean;
+	onPress: () => void;
+}) {
+	return (
+		<Hint
+			// The error line truncates in the button; its tooltip reveals it.
+			label={error ?? "Dictate"}
+			action={error ? undefined : "toggle-dictation"}
+			side="top"
+		>
+			<button
+				type="button"
+				onClick={onPress}
+				disabled={disabled}
+				aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
+				data-testid="dictation-toggle"
+				className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
+			>
+				<MicIcon className="size-3.5" />
+				<span className="max-w-full truncate">{error ?? "Dictate"}</span>
+			</button>
+		</Hint>
+	);
+}
+
 /**
  * The stats-bar dictation slot (owner placement, round 1): the row's middle
  * is one strip that is always the full free width —
@@ -851,34 +897,17 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 		return () => ro.disconnect();
 	}, [active]);
 
+	const pressIdle = () => {
+		if (!keyless) {
+			toggle();
+			return;
+		}
+		clearError();
+		openSettings("keys", DEEPGRAM_KEY_ID);
+	};
+
 	if (!active) {
-		return (
-			<Hint
-				// The error line truncates in the button; its tooltip reveals it.
-				label={error ?? "Dictate"}
-				action={error ? undefined : "toggle-dictation"}
-				side="top"
-			>
-				<button
-					type="button"
-					onClick={() => {
-						if (keyless) {
-							clearError();
-							openSettings("keys", DEEPGRAM_KEY_ID);
-						} else {
-							toggle();
-						}
-					}}
-					disabled={disabled || blocked}
-					aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
-					data-testid="dictation-toggle"
-					className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
-				>
-					<MicIcon className="size-3.5" />
-					<span className="max-w-full truncate">{error ?? "Dictate"}</span>
-				</button>
-			</Hint>
-		);
+		return <DictationIdleButton error={error} disabled={disabled || !!blocked} onPress={pressIdle} />;
 	}
 
 	return (

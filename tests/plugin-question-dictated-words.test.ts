@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { createQuestionEditorLease } from "../components/plugin-question-editor.ts";
+import type { DictatedSpeech } from "../src/core/dictation.ts";
 import type { PluginQuestionEditorHandle, PluginQuestionEditorProps } from "../src/core/plugin-questions.ts";
 
 const props: PluginQuestionEditorProps = { input: { question: "Q", payload: null }, chatId: "chat", questionId: "q1", contractVersion: 1, variant: "probe", signal: new AbortController().signal, answer: { status: "empty" }, active: true, onChange() {} };
@@ -29,6 +30,30 @@ it("routes {text, words} only to a handle that sets the flag and implements appe
 		assert.equal(lease.wantsWords, opted, name);
 		assert.deepEqual(received, opted ? [speech] : [], name);
 	}
+});
+
+it("latched speech survives a mid-run flag removal and falls back to text", async () => {
+	const received: DictatedSpeech[] = [];
+	const appended: string[] = [];
+	const handle: PluginQuestionEditorHandle & { wantsDictatedWords: boolean } = {
+		update() {}, focus() {}, dispose() {}, wantsDictatedWords: true,
+		appendTranscript(text) { appended.push(text); },
+		appendDictatedSpeech(speech) { received.push(speech); },
+	};
+	const lease = createQuestionEditorLease({ props, publish() {}, changed() {}, failed: () => assert.fail("unexpected failure") });
+	lease.adopt(handle);
+	await lease.appendSpeech(speech);
+	handle.wantsDictatedWords = false;
+	await lease.appendSpeech(speech);
+	assert.deepEqual(received, [speech], "a current opt-out keeps strict appendSpeech");
+	await lease.appendLatchedSpeech(speech);
+	assert.deepEqual(received, [speech, speech], "a latched run still reaches the opted-in callback");
+	assert.equal(appended.length, 0);
+
+	const callbackless = createQuestionEditorLease({ props, publish() {}, changed() {}, failed: () => assert.fail("unexpected failure") });
+	callbackless.adopt({ update() {}, focus() {}, dispose() {}, appendTranscript(text: string) { appended.push(text); } });
+	await callbackless.appendLatchedSpeech(speech);
+	assert.deepEqual(appended, [speech.text], "a vanished speech callback falls back to plain text");
 });
 
 it("an opted-in editor is a speech target without appendTranscript, and a non-function callback fails adoption", () => {
