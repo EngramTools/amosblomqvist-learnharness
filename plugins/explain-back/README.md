@@ -33,7 +33,11 @@ must contain non-whitespace explanation.
 catalog's cheap slot (Settings → Agent → Models → Cheap) when that slot is set and its model is
 still in the catalog; otherwise grading falls back to the session's conversation model, resolved
 from the session settings over the host catalog's strong-slot default. Set the cheap slot to
-grade with a cheaper model than the one teaching. The literal reader may not supply a premise,
+grade with a cheaper model than the one teaching. Each literal-reader and fix-wording call through
+`ctx.inference.complete` has its own 60-second timeout, which aborts that call;
+Jev is a separate HTTP request with its own 15-second timeout. A host-model call
+that exceeds its timeout surfaces as a grading error (or scoring
+`unavailable`, for the fix wording), and the answer stays saved. The literal reader may not supply a premise,
 definition, or connection the learner did not state. It returns versioned JSON:
 
 ```ts
@@ -41,6 +45,7 @@ definition, or connection the learner did not state. It returns versioned JSON:
   version: 1;
   reconstruction: string; // may be "" when the learner's words establish nothing
   gaps: { kind: "missing step" | "undefined term" | "wrong order" | "conclusion buried"; detail: string }[];
+  gradedBy?: string; // "provider/id" of the model that ran the literal reader; absent on pre-provenance results
   scoring?: // omitted on results saved before scoring existed; present on newly graded answers
     | {
         status: "ok";
@@ -55,7 +60,8 @@ definition, or connection the learner did not state. It returns versioned JSON:
 }
 ```
 
-If the literal reader call fails or its result is unreadable, grading fails: the host saves
+A “grading error” means the literal-reader call failed (including a timeout) or its
+result was unreadable: the host saves
 the answer with a grading error, and the answered card shows that error instead of
 reconstruction or gaps. The lesson continues normally. That outcome is separate from criterion
 scoring: when the literal reader succeeds but Jev, the fix-wording call, or key configuration
@@ -79,7 +85,14 @@ two-sentence wording; it never invents the score. A Jev reply over HTTP 4xx or 5
 past the 15-second request timeout (scoring `unavailable` with a timeout reason), a malformed
 reply, or a failed fix-wording call marks scoring `unavailable` with a reason that names the
 model that ran (for example, "The explain-back model claude-code/sonnet could not write the fix
-wording."), so the model that actually graded is visible on the answered card. The literal
+wording."), so the model that actually graded is visible on the answered card. Every newer
+result also records `gradedBy` (`provider/id` of the model that ran the literal reader); the
+answered card shows it on ok results and unavailable scoring. Literal-reader timeout,
+provider stop, empty-text, invalid-result, and unreadable-JSON errors name the model in their
+messages ("The literal reader (claude-code/sonnet) could not finish: …"); a raw provider
+exception is wrapped the same way and keeps its own text ("The literal reader
+(claude-code/sonnet) failed: Provider connection failed."). Results saved before this
+field existed show no model line. The literal
 reconstruction and gaps remain unchanged, and no scores or fix are shown. With no key, scoring
 is also unavailable; the plugin never substitutes model-produced scores.
 

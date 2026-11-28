@@ -56,6 +56,9 @@ export type ExplainBackResult = {
   /** Absent only on results saved before interview mode existed; every newer
    *  result carries it, as `unavailable` with a reason when metrics do not apply. */
   delivery?: ExplainBackDelivery;
+  /** The model that ran the literal reader, as `provider/id`. Absent only on
+   *  results saved before explain-back named the grading model. */
+  gradedBy?: string;
 };
 
 /**
@@ -251,6 +254,11 @@ function readDelivery(value: unknown): ExplainBackDelivery | null {
   return { status: "ok", fillersPerMin: value.fillersPerMin, wordsPerMin: value.wordsPerMin, pauses };
 }
 
+/** The grading model's `provider/id`, when a saved result carries a readable one. */
+function readGradedBy(value: unknown): Pick<ExplainBackResult, "gradedBy"> {
+  return typeof value === "string" && isReady(value) ? { gradedBy: value } : {};
+}
+
 /** Validate a saved or model-produced result. Null means unreadable feedback. An empty reconstruction is valid: a fragmentary explanation can establish nothing. */
 export function readExplainBackResult(value: unknown): ExplainBackResult | null {
   if (!record(value) || value.version !== RESULT_VERSION || typeof value.reconstruction !== "string" || !Array.isArray(value.gaps)) return null;
@@ -267,5 +275,5 @@ export function readExplainBackResult(value: unknown): ExplainBackResult | null 
   const result: ExplainBackResult = { version: RESULT_VERSION, reconstruction: value.reconstruction, gaps };
   if (scoring) result.scoring = scoring;
   if (delivery) result.delivery = delivery;
-  return result;
+  return { ...result, ...readGradedBy(value.gradedBy) };
 }

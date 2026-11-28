@@ -160,6 +160,7 @@ test("interview mode with dictated English computes delivery, asks Jev the fifth
 			...literalResult,
 			scoring: { status: "ok", criteria, fix: { criterion: DELIVERY_CRITERION, probability: 0.61, wording } },
 			delivery,
+			gradedBy: "test/default-model",
 		});
 		assert.equal(f.requests.length, 2);
 		assert.match(String(f.requests[1]!.context.messages[0]!.content), /filler/);
