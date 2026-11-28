@@ -33,6 +33,7 @@ import { ClaudeCodeError } from "./constants.ts";
 import { ContextWindowProbe } from "./context-window.ts";
 import { addLiveProcess, getLiveProcess, removeLiveProcess, type LiveProcess } from "./live-processes.ts";
 import { configurationForReuse, conversationForReuse } from "./reuse-context.ts";
+import { clearResumedAbandonedIds, discardAbandonedPendingCalls } from "./abandoned-calls.ts";
 import { BRIDGE_SERVER_NAME, createToolBridge, toolNameFromMcp, type PendingToolCall, type ToolBridge } from "./tool-bridge.ts";
 import { toClaudeInput, toStreamJsonLine } from "./transcript.ts";
 
@@ -74,7 +75,6 @@ const START_FAILED_MESSAGE = "claude CLI failed to start";
 const NO_STOP_REASON_MESSAGE = "claude CLI ended the message without a stop reason";
 const NOT_STREAMED_MESSAGE = "claude CLI finished without streaming its response";
 const NOT_SIGNED_IN_ERROR = "authentication_failed";
-const ABANDONED_CALL_MESSAGE = "claude CLI abandoned this tool call";
 
 export function toEffort(level: ThinkingLevel | undefined): AnthropicEffort {
 	return level ? EFFORTS[level] : "medium";
@@ -373,6 +373,7 @@ class ClaudeTurn {
 				Object.assign(block, parseToolCallArguments(this.partialJson.get(index) ?? ""));
 				this.partialJson.delete(index);
 				this.toolBlocks.delete(index);
+				this.abandonedCallIds.delete(block.id);
 				this.intents.push(block);
 				return;
 		}
@@ -571,27 +572,13 @@ class ClaudeProcess implements LiveProcess {
 		this.sourceCalls = this.sourceCalls.filter((intent) => intent.id !== call.id);
 	}
 
-	/** Answer the bridge requests of an abandoned attempt and drop them, so a retry cannot admit them. */
-	private discardAbandonedCalls(): void {
-		for (const call of this.bridge.getPendingToolCalls()) {
-			if (!this.abandonedCallIds.has(call.id)) continue;
-			this.bridge.resolveToolCall(call, {
-				role: "toolResult",
-				toolCallId: call.id,
-				toolName: call.name,
-				content: [{ type: "text", text: ABANDONED_CALL_MESSAGE }],
-				isError: true,
-				timestamp: Date.now(),
-			});
-		}
-	}
-
 	/** Only authenticated MCP requests, never stdout intent alone, admit side effects. */
 	flushAdmissions(): void {
 		if (this.stopping || this.turn.finished) return;
 		// A request from an abandoned attempt must never reach Pi, not even when
 		// the CLI retried the message and streamed the very same call again.
-		this.discardAbandonedCalls();
+		discardAbandonedPendingCalls(this.bridge, this.abandonedCallIds);
+		clearResumedAbandonedIds(this.abandonedCallIds, this.sourceCalls);
 		if (this.turn.awaitingRetry && this.bridge.getPendingToolCalls().length > 0) {
 			this.fail("claude CLI called a tool from a response it did not stream");
 			return;
@@ -661,7 +648,8 @@ class ClaudeProcess implements LiveProcess {
 			this.fail("claude CLI moved on while harness tool calls were waiting for results");
 			return;
 		}
-		if (event.type === "messageStart" && this.sourceComplete && this.sourceCalls.length > 0) {
+		const movedOnBeforeAdmission = event.type === "messageStart" && this.sourceComplete && this.sourceCalls.length > 0;
+		if (movedOnBeforeAdmission) {
 			this.fail("claude CLI moved on without admitting its harness tool calls");
 			return;
 		}
@@ -671,7 +659,7 @@ class ClaudeProcess implements LiveProcess {
 		if (event.type === "messageAbandoned") {
 			// The request of the abandoned call may already wait in the bridge.
 			for (const id of this.turn.abandonedCallIds) this.abandonedCallIds.add(id);
-			this.discardAbandonedCalls();
+			discardAbandonedPendingCalls(this.bridge, this.abandonedCallIds);
 			return;
 		}
 		if (event.type === "messageStop" && this.turn.waitingForAdmission) {
