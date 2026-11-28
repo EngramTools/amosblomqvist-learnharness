@@ -7,7 +7,6 @@ import type {
   PluginQuestionGradingContext,
 } from "learnharness-plugin-api";
 import {
-  GAP_KINDS,
   literalReaderInstructions,
   readAnswer,
   readExplainBackResult,
@@ -78,7 +77,9 @@ export function buildFixWordingMessage(input: FixWordingInput): string {
   const gaps = input.result.gaps.length
     ? input.result.gaps.map(gap => `- ${gap.kind}: ${gap.detail}`).join("\n")
     : "- (none found)";
-  const scores = GAP_KINDS.map(kind => `- ${kind}: ${input.scores.criteria[kind]}`).join("\n");
+  const scores = Object.entries(input.scores.criteria)
+    .map(([kind, probability]) => `- ${kind}: ${probability}`)
+    .join("\n");
   return [
     "The step the learner was taught:",
     input.payload.step,
@@ -253,12 +254,23 @@ async function scoreLiteracy(request: ScoreLiteracyRequest): Promise<ExplainBack
     throw error;
   }
   request.signal.throwIfAborted();
-  let wording: string;
+  // Valid Jev scores survive a wording failure: the fix renders without wording.
+  let wording: string | undefined;
   try {
     wording = await writeFixWording({ context: request.context, model: request.model, input: { ...request.input, scores }, signal: request.signal });
   } catch (error) {
     request.signal.throwIfAborted();
-    return unavailable(error instanceof Error ? error.message : `The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`);
+    return {
+      status: "ok",
+      criteria: scores.criteria,
+      fix: {
+        criterion: scores.fix.criterion,
+        probability: scores.fix.probability,
+        unavailableReason: error instanceof Error && error.message.trim() !== ""
+          ? error.message
+          : `The explain-back model ${request.model.provider}/${request.model.id} could not write the fix wording.`,
+      },
+    };
   }
   return { status: "ok", criteria: scores.criteria, fix: { ...scores.fix, wording } };
 }
@@ -292,9 +304,22 @@ async function writeFixWording(request: FixWordingRequest): Promise<string> {
 
 /** Read the wording reply; blank text is a failed call, named after the model that ran. */
 export function readFixWording(text: string, model: PluginModelSpec): string {
-  const wording = text.trim();
+  const wording = trimToTwoSentences(text.trim());
   if (!wording) throw new Error(`The explain-back model ${model.provider}/${model.id} returned no fix wording.`);
   return wording;
+}
+
+/** The wording is capped at one or two sentences; later sentences are dropped. */
+export const MAX_FIX_WORDING_SENTENCES = 2;
+const MIN_FIX_WORDING_LENGTH = 1;
+
+export function trimToTwoSentences(text: string): string {
+  // A terminator ends a sentence only at whitespace or the end of the text,
+  // so decimals (2.5) and abbreviations (i.e.) keep their prefix instead of
+  // matching a later sentence segment.
+  const sentences = text.split(/(?<=[.!?])(?=\s|$)/);
+  const kept = sentences.slice(0, MAX_FIX_WORDING_SENTENCES).join("").trim();
+  return kept.length >= MIN_FIX_WORDING_LENGTH ? kept : "";
 }
 
 function unavailable(reason: string): ExplainBackScoring {

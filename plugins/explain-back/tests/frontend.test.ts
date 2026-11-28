@@ -288,3 +288,44 @@ test("unavailable scoring shows only the reason and keeps the reconstruction and
   assert.equal(container.querySelectorAll("[data-fix-criterion]").length, 0);
   controller.abort();
 });
+
+test("the fix-choice line names the criterion with a rounded percent, even when wording failed", () => {
+  const f = fixture();
+  const container = f.document.createElement("div");
+  f.document.body.append(container);
+  const controller = new AbortController();
+  f.renderer.mountAnswered!(container, {
+    ...mountContext(controller.signal),
+    answer: { text: "An even number is 2k, so its square is divisible by 4." },
+    grading: {
+      result: {
+        version: 1,
+        reconstruction: "An even number is 2k, and its square is 4k².",
+        gaps: [{ kind: "missing step", detail: "Squaring 2k gives 4k²." }],
+        scoring: {
+          status: "ok",
+          criteria: { "missing step": 0.8264, "undefined term": 0.105, "wrong order": 0.034, "conclusion buried": 0.275 },
+          fix: {
+            criterion: "wrong order",
+            probability: 0.034,
+            unavailableReason: "The explain-back model test/default-model could not write the fix wording.",
+          },
+        },
+      },
+    },
+  });
+
+  const text = container.textContent!;
+  const fixChoice = container.querySelector(".lh-explain-back__fix-choice");
+  assert.equal(fixChoice?.textContent, "Wrong order · 3%");
+  assert.match(text, /83%/);
+  assert.match(text, /11%/);
+  assert.match(text, /3%/);
+  assert.match(text, /28%/);
+  assert.equal(container.querySelector("[data-fix-criterion]")?.getAttribute("data-fix-criterion"), "wrong order");
+  assert.match(text, /Fix wording is unavailable/);
+  assert.match(text, /could not write the fix wording\./);
+  assert.doesNotMatch(text, /\.\./);
+  controller.abort();
+  assert.equal(container.textContent, "");
+});
