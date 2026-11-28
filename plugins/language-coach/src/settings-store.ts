@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CoachLocale } from "./judge-types.ts";
+import {
+  DEFAULT_EN_VOICE,
+  DEFAULT_ZH_VOICE,
+  storedVoice,
+} from "./voice-config.ts";
 
 export const SPEECH_KEY_MAX_LENGTH = 4096;
 export const TONEPERFECT_KEY_MAX_LENGTH = 4096;
@@ -14,12 +19,16 @@ export type StoredSettings = {
   tonePerfectKey?: string;
   targetLanguage?: CoachLocale;
   firstLanguage?: string;
+  enVoice?: string;
+  zhVoice?: string;
 };
 
 export type PublicSettings = {
   configured: boolean;
   region: string;
   tonePerfectConfigured: boolean;
+  enVoice: string;
+  zhVoice: string;
 };
 
 export type CoachProfile = {
@@ -123,6 +132,8 @@ export function loadSettings(directory: string): StoredSettings {
       tonePerfectKey: storedText(value.tonePerfectKey, TONEPERFECT_KEY_MAX_LENGTH),
       targetLanguage: storedTarget(value.targetLanguage),
       firstLanguage: storedText(value.firstLanguage, FIRST_LANGUAGE_MAX_LENGTH),
+      enVoice: storedVoice(value.enVoice, "en-US"),
+      zhVoice: storedVoice(value.zhVoice, "zh-CN"),
     };
     return Object.fromEntries(Object.entries(fields).filter(([, field]) => field !== undefined));
   } catch {
@@ -147,7 +158,15 @@ export function publicSettings(settings: StoredSettings): PublicSettings {
     configured: Boolean(settings.azureSpeechKey),
     region: settings.azureRegion ?? "",
     tonePerfectConfigured: Boolean(settings.tonePerfectKey),
+    enVoice: settings.enVoice ?? DEFAULT_EN_VOICE,
+    zhVoice: settings.zhVoice ?? DEFAULT_ZH_VOICE,
   };
+}
+
+export function voiceFor(settings: StoredSettings, locale: CoachLocale): string {
+  return locale === "zh-CN"
+    ? settings.zhVoice ?? DEFAULT_ZH_VOICE
+    : settings.enVoice ?? DEFAULT_EN_VOICE;
 }
 
 export function coachProfile(settings: StoredSettings): CoachProfile {

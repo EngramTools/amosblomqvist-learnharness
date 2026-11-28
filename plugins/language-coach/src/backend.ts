@@ -1,8 +1,15 @@
+import path from "node:path";
 import type { PluginBackendContext } from "learnharness-plugin-api";
 import type { AssessmentResult, CoachLocale, PronunciationJudge } from "./judge-types.ts";
 import { assess, createAzureJudge, type AzureJudgeRuntime } from "./azure-judge.ts";
 import { createTonePerfectJudge, type TonePerfectJudgeRuntime } from "./toneperfect-judge.ts";
 import { RECORDING_LIMIT_MS } from "./recorder.ts";
+import {
+  synthesizeReference,
+  type ReferenceAudioResult,
+  type ReferenceTtsRuntime,
+} from "./reference-tts.ts";
+import { normalizeVoice } from "./voice-config.ts";
 import {
   loadSettings,
   normalizeFirstLanguage,
@@ -13,6 +20,7 @@ import {
   readSpeechKey,
   readTonePerfectKey,
   saveSettings,
+  voiceFor,
   type CoachProfile,
   type PublicSettings,
   type StoredSettings,
@@ -21,6 +29,7 @@ import {
 export type LanguageCoachBackendOptions = {
   judge?: AzureJudgeRuntime;
   tonePerfectJudge?: TonePerfectJudgeRuntime;
+  referenceTts?: ReferenceTtsRuntime;
 };
 
 /** 30 s of 16 kHz mono 16-bit PCM plus the WAV header. */
@@ -50,9 +59,9 @@ function decodeClip(input: unknown): Uint8Array {
   return new Uint8Array(bytes);
 }
 
-function readReferenceText(input: unknown): string {
-  if (!record(input) || typeof input.referenceText !== "string") throw new Error("Expected reference text.");
-  const text = input.referenceText.trim();
+function readText(input: unknown, field: "referenceText" | "text"): string {
+  if (!record(input) || typeof input[field] !== "string") throw new Error("Expected reference text.");
+  const text = input[field].trim();
   if (!text) throw new Error("The reference text must not be blank.");
   if (text.length > REFERENCE_TEXT_MAX_LENGTH) {
     throw new Error(`The reference text must be at most ${REFERENCE_TEXT_MAX_LENGTH} characters.`);
@@ -89,6 +98,8 @@ function mergeSettings(settings: StoredSettings, input: Record<string, unknown>)
   if (input.tonePerfectKey !== undefined) next.tonePerfectKey = readTonePerfectKey(input);
   if (input.targetLanguage !== undefined) next.targetLanguage = normalizeTargetLanguage(input.targetLanguage);
   if (input.firstLanguage !== undefined) next.firstLanguage = normalizeFirstLanguage(input.firstLanguage);
+  if (input.enVoice !== undefined) next.enVoice = normalizeVoice(input.enVoice, "en-US");
+  if (input.zhVoice !== undefined) next.zhVoice = normalizeVoice(input.zhVoice, "zh-CN");
   return next;
 }
 
@@ -123,9 +134,24 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
   const assessClip = ctx.handle("assess-pronunciation", async (input): Promise<AssessmentResult> => {
     assertActive();
     const clip = decodeClip(input);
-    const referenceText = readReferenceText(input);
+    const referenceText = readText(input, "referenceText");
     const locale = readLocale(input, settings);
     return judgeFor(settings, locale, options).assess(clip, referenceText, locale);
+  });
+
+  const getReferenceAudio = ctx.handle("get-reference-audio", async (input): Promise<ReferenceAudioResult> => {
+    assertActive();
+    const text = readText(input, "text");
+    const locale = readLocale(input, settings);
+    return synthesizeReference({
+      subscriptionKey: settings.azureSpeechKey ?? "",
+      region: settings.azureRegion ?? "",
+      voice: voiceFor(settings, locale),
+      text,
+      locale,
+      cacheDirectory: path.join(ctx.dataDirectory, "reference-audio"),
+      ...options.referenceTts,
+    });
   });
 
   return () => {
@@ -135,6 +161,7 @@ export function activate(ctx: PluginBackendContext, options: LanguageCoachBacken
     getProfile();
     save();
     assessClip();
+    getReferenceAudio();
   };
 }
 

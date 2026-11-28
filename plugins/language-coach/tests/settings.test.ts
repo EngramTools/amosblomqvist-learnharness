@@ -3,7 +3,13 @@ import { test } from "node:test";
 import { parseHTML } from "linkedom";
 import type { PluginCleanup, PluginFrontendContext, PluginSettingsRegistration } from "learnharness-plugin-api";
 import { activate } from "../src/main.ts";
-import { readPublicSettings, SPEECH_KEY_DESCRIPTION, SPEECH_KEY_LABEL, TONEPERFECT_KEY_LABEL } from "../src/settings-view.ts";
+import {
+  readPublicSettings,
+  SPEECH_KEY_DESCRIPTION,
+  SPEECH_KEY_LABEL,
+  TONEPERFECT_KEY_LABEL,
+} from "../src/settings-view.ts";
+import { DEFAULT_EN_VOICE, DEFAULT_ZH_VOICE } from "../src/voice-config.ts";
 
 type Mount = (container: HTMLElement, signal: AbortSignal) => void | PluginCleanup | Promise<void | PluginCleanup>;
 
@@ -23,14 +29,24 @@ async function settingsReply(hold: FixtureOptions["holdSettings"]): Promise<unkn
   return { configured: false, region: hold?.region ?? "", tonePerfectConfigured: false };
 }
 
-async function answer(options: FixtureOptions, operation: string): Promise<unknown> {
+async function answer(options: FixtureOptions, operation: string, input?: unknown): Promise<unknown> {
   if (operation === "get-settings") return settingsReply(options.holdSettings);
   if (operation === "get-coach-profile") return { targetLanguage: "en-US", firstLanguage: "en" };
+  if (operation === "get-reference-audio") return options.referenceAudio ?? { status: "unavailable", reason: "Reference audio is unavailable." };
   if (options.failSave) {
     throw new Error(options.rejectWithKey ? `Transport failed near ${options.rejectWithKey}` : "The settings could not be saved.");
   }
   if (operation === "assess-pronunciation") return nextAssessment(options);
-  return { configured: true, region: "westus", tonePerfectConfigured: true, targetLanguage: "en-US", firstLanguage: "en" };
+  const fields = input !== null && typeof input === "object" ? input as Record<string, unknown> : {};
+  return {
+    configured: true,
+    region: "westus",
+    tonePerfectConfigured: true,
+    enVoice: typeof fields.enVoice === "string" ? fields.enVoice : DEFAULT_EN_VOICE,
+    zhVoice: typeof fields.zhVoice === "string" ? fields.zhVoice : DEFAULT_ZH_VOICE,
+    targetLanguage: "en-US",
+    firstLanguage: "en",
+  };
 }
 
 type FixtureOptions = {
@@ -40,6 +56,7 @@ type FixtureOptions = {
   /** Answers handed out in order, one per assessment call. */
   assessments?: unknown[];
   pendingAssessment?: Promise<unknown>;
+  referenceAudio?: unknown;
   /** Holds the first get-settings reply until released, with this region. */
   holdSettings?: { until: Promise<void>; region: string; fail?: boolean };
 };
@@ -52,7 +69,7 @@ function fixture(options: FixtureOptions = {}) {
   const cleanup = activate({
     call: async (operation: string, input?: unknown) => {
       calls.push({ operation, input });
-      return answer(options, operation);
+      return answer(options, operation, input);
     },
     onNotification(listener: (event: { topic: string; data: unknown }) => void) {
       notify = listener;
@@ -206,7 +223,13 @@ test("the frontend reads back only whether the TonePerfect key is configured", (
     tonePerfectConfigured: true,
     tonePerfectKey: "toneperfect-secret",
   });
-  assert.deepEqual(settings, { configured: false, region: "westus", tonePerfectConfigured: true });
+  assert.deepEqual(settings, {
+    configured: false,
+    region: "westus",
+    tonePerfectConfigured: true,
+    enVoice: DEFAULT_EN_VOICE,
+    zhVoice: DEFAULT_ZH_VOICE,
+  });
 });
 
 test("a save failure never echoes the key into the status", async () => {
@@ -535,5 +558,86 @@ test("a failed late initial load does not replace the saved status", async () =>
   hold.resolve();
   await settle();
   assert.equal(container.textContent!.includes("could not be read"), false);
+  controller.abort();
+});
+
+test("reference voices are editable with the defaults filled in", async () => {
+  const { f, container, controller } = await mounted();
+  const en = container.querySelector("#lh-language-coach-en-voice") as HTMLInputElement;
+  const zh = container.querySelector("#lh-language-coach-zh-voice") as HTMLInputElement;
+  assert.equal(en.value, DEFAULT_EN_VOICE);
+  assert.equal(zh.value, DEFAULT_ZH_VOICE);
+
+  en.value = "en-US-GuyNeural";
+  zh.value = "zh-CN-YunxiNeural";
+  fire(f.document, container.querySelector("form")!, "submit");
+  await settle();
+
+  const save = f.calls.find(call => call.operation === "save-settings");
+  const input = save?.input as Record<string, unknown> | undefined;
+  assert.equal(input?.enVoice, "en-US-GuyNeural");
+  assert.equal(input?.zhVoice, "zh-CN-YunxiNeural");
+  assert.equal(en.value, "en-US-GuyNeural");
+  assert.equal(zh.value, "zh-CN-YunxiNeural");
+  controller.abort();
+});
+
+test("the reference play button is disabled with the missing-key reason, and the drill still works", async () => {
+  const { container, controller } = await mounted();
+  const play = button(container, "Play reference") as HTMLButtonElement;
+  assert.equal(play.disabled, true);
+  assert.match(container.textContent!, /Add an Azure Speech key in Language coach settings\./);
+  assert.equal((button(container, "Record") as HTMLButtonElement).disabled, false);
+  controller.abort();
+});
+
+test("a TTS failure disables the play button with its reason without disabling the drill", async () => {
+  const { f, container, controller } = await mounted({
+    referenceAudio: { status: "unavailable", reason: "Azure reference audio failed (503)." },
+  });
+  f.notify!({
+    topic: "settings-changed",
+    data: { configured: true, region: "westus", tonePerfectConfigured: false, targetLanguage: "en-US", firstLanguage: "en" },
+  });
+  await settle();
+  setReference(container, "think");
+  const play = button(container, "Play reference") as HTMLButtonElement;
+  assert.equal(play.disabled, false);
+
+  click(f.document, play);
+  await settle();
+
+  assert.equal(play.disabled, true);
+  assert.match(container.textContent!, /Azure reference audio failed \(503\)\./);
+  assert.equal((button(container, "Record") as HTMLButtonElement).disabled, false);
+  const call = f.calls.find(item => item.operation === "get-reference-audio");
+  assert.deepEqual(call?.input, { text: "think", locale: "en-US" });
+  controller.abort();
+});
+
+test("playing reference audio loads the audio element and reports the source", async () => {
+  const { f, container, controller } = await mounted({
+    referenceAudio: {
+      status: "ok",
+      audioBase64: Buffer.from("audio-bytes").toString("base64"),
+      contentType: "audio/mpeg",
+      voice: DEFAULT_EN_VOICE,
+      cached: false,
+    },
+  });
+  f.notify!({
+    topic: "settings-changed",
+    data: { configured: true, region: "westus", tonePerfectConfigured: false, targetLanguage: "en-US", firstLanguage: "en" },
+  });
+  await settle();
+  setReference(container, "think");
+
+  click(f.document, button(container, "Play reference"));
+  await settle();
+
+  const audio = container.querySelector("audio") as HTMLAudioElement;
+  assert.equal(audio.src.startsWith("data:audio/mpeg;base64,"), true);
+  assert.match(container.textContent!, /Playing reference audio\./);
+  assert.equal((button(container, "Play reference") as HTMLButtonElement).disabled, false);
   controller.abort();
 });

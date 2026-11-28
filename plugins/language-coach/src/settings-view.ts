@@ -3,7 +3,9 @@ import type { CoachLocale } from "./judge-types.ts";
 import { assessmentLines, assessmentSummary } from "./assessment-details.ts";
 import { RECORDING_LIMIT_MS } from "./recorder.ts";
 import { createRecordingFlow } from "./recording-flow.ts";
+import { createReferenceAudioPlayer } from "./reference-audio-player.ts";
 import { button, note, passwordField, selectField, textField } from "./settings-fields.ts";
+import { DEFAULT_EN_VOICE, DEFAULT_ZH_VOICE } from "./voice-config.ts";
 
 type SettingsContext = Pick<PluginFrontendContext, "call" | "onNotification">;
 
@@ -16,6 +18,8 @@ type FormFields = {
   key: LabeledInput<HTMLInputElement>;
   tonePerfectKey: LabeledInput<HTMLInputElement>;
   region: LabeledInput<HTMLInputElement>;
+  enVoice: LabeledInput<HTMLInputElement>;
+  zhVoice: LabeledInput<HTMLInputElement>;
   target: LabeledInput<HTMLSelectElement>;
   first: LabeledInput<HTMLInputElement>;
 };
@@ -32,6 +36,9 @@ type RecorderUi = {
   reference: HTMLInputElement;
   record: HTMLButtonElement;
   stop: HTMLButtonElement;
+  play: HTMLButtonElement;
+  audio: HTMLAudioElement;
+  audioStatus: HTMLParagraphElement;
   details: HTMLUListElement;
 };
 
@@ -39,6 +46,8 @@ export type PublicSettings = {
   configured: boolean;
   region: string;
   tonePerfectConfigured: boolean;
+  enVoice: string;
+  zhVoice: string;
 };
 
 export type CoachProfile = {
@@ -51,6 +60,8 @@ export const SPEECH_KEY_DESCRIPTION = "Recorded clips are sent to Azure for pron
 export const TONEPERFECT_KEY_LABEL = "TonePerfect key";
 export const TONEPERFECT_KEY_DESCRIPTION = "Mandarin clips are sent to TonePerfect for tone assessment when a key is saved. The key is stored in this plugin's data directory and is never shown in full.";
 export const REGION_LABEL = "Azure Speech region";
+export const EN_VOICE_LABEL = "English reference voice";
+export const ZH_VOICE_LABEL = "Mandarin reference voice";
 export const TARGET_LANGUAGE_LABEL = "Target language";
 export const FIRST_LANGUAGE_LABEL = "Learner first language";
 
@@ -73,7 +84,13 @@ function isLocale(value: unknown): value is CoachLocale {
 export function readPublicSettings(value: unknown): PublicSettings {
   const entry = record(value) ? value : {};
   if (!isPublicSettings(entry)) throw new Error("Language coach settings are unavailable.");
-  return { configured: entry.configured, region: entry.region, tonePerfectConfigured: entry.tonePerfectConfigured };
+  return {
+    configured: entry.configured,
+    region: entry.region,
+    tonePerfectConfigured: entry.tonePerfectConfigured,
+    enVoice: typeof entry.enVoice === "string" && entry.enVoice.trim() ? entry.enVoice : DEFAULT_EN_VOICE,
+    zhVoice: typeof entry.zhVoice === "string" && entry.zhVoice.trim() ? entry.zhVoice : DEFAULT_ZH_VOICE,
+  };
 }
 
 export function readCoachProfile(value: unknown): CoachProfile {
@@ -102,6 +119,8 @@ function buildForm(document: Document): FormUi {
     key: passwordField(document, SPEECH_KEY_LABEL, "lh-language-coach-key"),
     tonePerfectKey: passwordField(document, TONEPERFECT_KEY_LABEL, "lh-language-coach-toneperfect-key"),
     region: textField(document, REGION_LABEL, "lh-language-coach-region", "westus"),
+    enVoice: textField(document, EN_VOICE_LABEL, "lh-language-coach-en-voice", DEFAULT_EN_VOICE),
+    zhVoice: textField(document, ZH_VOICE_LABEL, "lh-language-coach-zh-voice", DEFAULT_ZH_VOICE),
     target: selectField(document, TARGET_LANGUAGE_LABEL, "lh-language-coach-target", [
       { value: "en-US", label: "English (en-US)" },
       { value: "zh-CN", label: "Mandarin (zh-CN)" },
@@ -123,6 +142,8 @@ function buildForm(document: Document): FormUi {
     fields.tonePerfectKey.field,
     note(document, TONEPERFECT_KEY_DESCRIPTION),
     fields.region.field,
+    fields.enVoice.field,
+    fields.zhVoice.field,
     fields.target.field,
     fields.first.field,
     actions,
@@ -143,11 +164,19 @@ function buildRecorder(document: Document): RecorderUi {
   const record = button(document, "button", "Record");
   const stop = button(document, "button", "Stop");
   stop.disabled = true;
+  const play = button(document, "button", "Play reference");
+  play.disabled = true;
+  const audio = document.createElement("audio");
+  audio.preload = "none";
+  audio.hidden = true;
+  const audioStatus = document.createElement("p");
+  audioStatus.className = "lh-language-coach-settings__status";
+  audioStatus.setAttribute("role", "status");
   const details = document.createElement("ul");
   details.className = "lh-language-coach-settings__details";
   const limitNote = note(document, `Recording stops automatically after ${RECORDING_LIMIT_MS / 1000} seconds.`);
-  section.append(title, reference, record, stop, limitNote, details);
-  return { section, reference, record, stop, details };
+  section.append(title, reference, play, record, stop, audio, limitNote, audioStatus, details);
+  return { section, reference, record, stop, play, audio, audioStatus, details };
 }
 
 function applyPublicSettings(fields: FormFields, settings: PublicSettings, profile: CoachProfile): void {
@@ -156,13 +185,18 @@ function applyPublicSettings(fields: FormFields, settings: PublicSettings, profi
     ? "Saved key — enter a new key to replace it"
     : "Paste a TonePerfect key";
   fields.region.input.value = settings.region;
-  fields.target.input.value = profile.targetLanguage;
+  fields.enVoice.input.value = settings.enVoice;
+  fields.zhVoice.input.value = settings.zhVoice;
+  const target = Array.from(fields.target.input.options).find(option => option.value === profile.targetLanguage);
+  if (target) target.selected = true;
   fields.first.input.value = profile.firstLanguage;
 }
 
 function settingsPayload(fields: FormFields, key: string, tonePerfectKey: string): Record<string, string> {
   return {
     region: fields.region.input.value,
+    enVoice: fields.enVoice.input.value,
+    zhVoice: fields.zhVoice.input.value,
     targetLanguage: fields.target.input.value,
     firstLanguage: fields.first.input.value,
     ...(key ? { key } : {}),
@@ -263,12 +297,42 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   // Once the learner edits, saves or is notified, a late initial load must not overwrite what they see.
   let newerThanLoad = false;
   const markNewer = () => { newerThanLoad = true; };
-  watchEdits([fields.key.input, fields.tonePerfectKey.input, fields.region.input, fields.target.input, fields.first.input], markNewer);
   const isLive = () => !disposed && !signal.aborted;
   const setStatus = (message: string, error = false) => {
     status.textContent = message;
     status.classList.toggle("lh-language-coach-settings__status-error", error);
   };
+  const player = createReferenceAudioPlayer({
+    call: (operation, input) => ctx.call(operation, input),
+    isLive,
+    readInput: () => {
+      const locale = fields.target.input.value;
+      return { text: recorderUi.reference.value.trim(), locale: isLocale(locale) ? locale : "en-US" };
+    },
+    button: recorderUi.play,
+    status: recorderUi.audioStatus,
+    audio: recorderUi.audio,
+  });
+  const applySettings = (settings: PublicSettings, profile: CoachProfile) => {
+    applyPublicSettings(fields, settings, profile);
+    player.setAvailable(settings);
+  };
+  watchEdits(
+    [
+      fields.key.input,
+      fields.tonePerfectKey.input,
+      fields.region.input,
+      fields.enVoice.input,
+      fields.zhVoice.input,
+      fields.target.input,
+      fields.first.input,
+      recorderUi.reference,
+    ],
+    () => {
+      markNewer();
+      player.reset();
+    },
+  );
   const onSubmit = createSubmitHandler({ ctx, fields, save, isLive, markNewer, setStatus });
   const results = createResultView(document, recorderUi.details, setStatus);
 
@@ -285,10 +349,11 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   form.addEventListener("submit", onSubmit);
   recorderUi.record.addEventListener("click", () => { void flow.start(); });
   recorderUi.stop.addEventListener("click", () => { void flow.stop(); });
+  recorderUi.play.addEventListener("click", () => { void player.play(); });
   const unsubscribe = subscribeSettings(ctx, (settings, profile) => {
     if (disposed) return;
     markNewer();
-    applyPublicSettings(fields, settings, profile);
+    applySettings(settings, profile);
   });
 
   const dispose = () => {
@@ -299,6 +364,7 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
     form.removeEventListener("submit", onSubmit);
     fields.key.input.value = "";
     flow.dispose();
+    player.dispose();
     root.remove();
   };
   signal.addEventListener("abort", dispose, { once: true });
@@ -306,7 +372,9 @@ export function mountLanguageCoachSettings(container: HTMLElement, ctx: Settings
   const initialise = async () => {
     try {
       const [settings, profile] = await loadSettings(ctx);
-      if (isLive() && !newerThanLoad) applyPublicSettings(fields, settings, profile);
+      if (isLive() && !newerThanLoad) {
+        applySettings(settings, profile);
+      }
     } catch {
       if (isLive() && !newerThanLoad) setStatus("The saved settings could not be read.", true);
     }
